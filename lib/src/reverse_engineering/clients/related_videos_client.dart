@@ -37,86 +37,76 @@ class RelatedVideosClient {
         'contentImage/thumbnailViewModel/overlays/0/thumbnailBottomOverlayViewModel/badges/0/thumbnailBadgeViewModel/text');
     final uploadDate = data.getJson<String>(
         'metadata/lockupMetadataViewModel/metadata/contentMetadataViewModel/metadataRows/1/metadataParts/1/text/content');
-    final views = data.getJson<String>(
+    final viewsText = data.getJson<String>(
         'metadata/lockupMetadataViewModel/metadata/contentMetadataViewModel/metadataRows/1/metadataParts/0/text/content');
     final author = data.getJson<String>(
         'metadata/lockupMetadataViewModel/metadata/contentMetadataViewModel/metadataRows/0/metadataParts/0/text/content');
 
+    final views = int.tryParse(viewsText?.stripNonDigits() ?? '') ?? 0;
+
     return Video(
-        VideoId(videoId),
-        title,
-        author ?? '',
-        ChannelId(channelId),
-        uploadDate?.toDateTime(),
-        uploadDate,
-        uploadDate?.toDateTime(),
-        '',
-        duration?.toDuration(),
-        ThumbnailSet(videoId),
-        [],
-        Engagement(int.parse((views ?? '0').stripNonDigits()), null, null),
-        duration == 'LIVE');
+      VideoId(videoId),
+      title,
+      author ?? '',
+      ChannelId(channelId),
+      uploadDate?.toDateTime(),
+      uploadDate,
+      uploadDate?.toDateTime(),
+      '',
+      duration?.toDuration(),
+      ThumbnailSet(videoId),
+      [],
+      Engagement(views, null, null),
+      duration == 'LIVE',
+    );
   }
 
   Video? _parseCompactVideo(Map<String, dynamic> data) {
-    if (data
-        case {
-          'videoId': final String videoId,
-          'title': {'simpleText': final String title},
-          'longBylineText': {
-            'runs': [
-              {
-                'text': final String author,
-                'navigationEndpoint': {
-                  'browseEndpoint': {'browseId': final String channelId}
-                }
-              }
-            ]
-          },
-          'publishedTimeText': {
-            'simpleText': final String uploadDate,
-          },
-          'lengthText': {
-            'simpleText': final String duration,
-          },
-          'viewCountText': {
-            'simpleText': final String videoCount,
-          }
-        }) {
-      return Video(
-        VideoId(videoId),
-        title,
-        author,
-        ChannelId(channelId),
-        uploadDate.toDateTime(),
-        uploadDate,
-        uploadDate.toDateTime(),
-        '',
-        duration.toDuration(),
-        ThumbnailSet(videoId),
-        [],
-        Engagement(int.parse(videoCount.stripNonDigits()), null, null),
-        false,
-      );
+    final videoId = data['videoId'] as String?;
+    final title = data['title']?['simpleText'] as String?;
+    final author = data['longBylineText']?['runs']?[0]?['text'] as String?;
+    final channelId = data['longBylineText']?['runs']?[0]?['navigationEndpoint']
+        ?['browseEndpoint']?['browseId'] as String?;
+
+    if (videoId == null ||
+        title == null ||
+        author == null ||
+        channelId == null) {
+      return null;
     }
-    return null;
+
+    final uploadDate = data['publishedTimeText']?['simpleText'] as String?;
+    final duration = data['lengthText']?['simpleText'] as String?;
+    final viewCountText = data['viewCountText']?['simpleText'] as String?;
+
+    final views = int.tryParse(viewCountText?.stripNonDigits() ?? '') ?? 0;
+
+    return Video(
+      VideoId(videoId),
+      title,
+      author,
+      ChannelId(channelId),
+      uploadDate?.toDateTime(),
+      uploadDate,
+      uploadDate?.toDateTime(),
+      '',
+      duration?.toDuration(),
+      ThumbnailSet(videoId),
+      [],
+      Engagement(views, null, null),
+      false,
+    );
   }
 
   String? getContinuationToken() {
-    return switch (contents) {
-      [
-        ...,
-        {
-          'continuationItemRenderer': {
-            'continuationEndpoint': {
-              'continuationCommand': {'token': final String token}
-            }
-          }
-        }
-      ] =>
-        token,
-      _ => null,
-    };
+    for (final item in contents) {
+      final token = item['continuationItemRenderer']?['continuationEndpoint']
+              ?['continuationCommand']?['token'] as String? ??
+          item['continuationItemRenderer']?['button']?['buttonRenderer']
+              ?['command']?['continuationCommand']?['token'] as String?;
+      if (token != null) return token;
+    }
+    return null;
   }
 
   const RelatedVideosClient(this.contents);
@@ -128,17 +118,19 @@ class RelatedVideosClient {
     }
     final response =
         await client.sendPost('next', {'continuation': continuation});
-    if (response
-        case {
-          'onResponseReceivedEndpoints': [
-            {
-              'appendContinuationItemsAction': {
-                'continuationItems': final List<dynamic> contents,
-              }
-            }
-          ]
-        }) {
-      return RelatedVideosClient(contents.cast<Map<String, dynamic>>());
+
+    final actions = response['onResponseReceivedEndpoints'] as List? ??
+        response['onResponseReceivedActions'] as List?;
+
+    if (actions == null) return null;
+
+    for (final action in actions) {
+      final continuationItems = action['appendContinuationItemsAction']
+          ?['continuationItems'] as List?;
+      if (continuationItems != null) {
+        return RelatedVideosClient(
+            continuationItems.cast<Map<String, dynamic>>());
+      }
     }
     return null;
   }
