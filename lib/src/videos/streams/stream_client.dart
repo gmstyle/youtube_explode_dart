@@ -32,12 +32,14 @@ class StreamClient {
   ///
   /// See [YoutubeApiClient] for all the possible clients that can be set using the [ytClients] parameter.
   /// If [ytClients] is null the library automatically manages the clients, otherwise only the clients provided are used.
-  /// Currently by default the  [YoutubeApiClient.androidSdkless] client is used,
+  /// Currently by default the [YoutubeApiClient.androidVr] client is used,
   /// and if a js solver is provided the [YoutubeApiClient.safari] is used additionally.
   ///
   ///
   /// Note: if using any android client youtube often prevents downloading the same stream multiple times or downloading more than one stream from the same manifest.
   /// Note: that age restricted videos are no longer support due to the changes in the YouTube API.
+  /// Note: [YoutubeApiClient.androidSdkless] / [YoutubeApiClient.android] often return adaptive
+  /// (audio/video-only) URLs that the CDN rejects with HTTP 403; prefer [YoutubeApiClient.androidVr].
   ///
   /// If [requireWatchPage] (default: true) is set to false the watch page is not used to extract the streams (so the process can be faster) but
   /// it probably will be less reliable.
@@ -65,7 +67,7 @@ class StreamClient {
         'ytClients cannot be an empty list');
 
     videoId = VideoId.fromString(videoId);
-    final clients = ytClients ?? [YoutubeApiClient.androidSdkless];
+    final clients = ytClients ?? [YoutubeApiClient.androidVr];
 
     if (_jsChallengeSolver != null && ytClients == null) {
       clients.add(YoutubeApiClient.safari);
@@ -110,6 +112,21 @@ class StreamClient {
             throw YoutubeExplodeException(
               'Video $videoId returned 403 (stream: ${streams.first.tag})',
             );
+          }
+
+          // Muxed-only HEAD can hide CDN 403s on adaptive URLs (e.g. androidSdkless).
+          final adaptive = streams.cast<StreamInfo?>().firstWhere(
+                (s) =>
+                    s is AudioOnlyStreamInfo || s is VideoOnlyStreamInfo,
+                orElse: () => null,
+              );
+          if (adaptive != null) {
+            final adaptiveHead = await _httpClient.head(adaptive.url);
+            if (adaptiveHead.statusCode == 403) {
+              throw YoutubeExplodeException(
+                'Video $videoId returned 403 (stream: ${adaptive.tag})',
+              );
+            }
           }
           uniqueStreams.addAll(streams);
         });

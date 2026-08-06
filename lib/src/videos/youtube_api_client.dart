@@ -39,9 +39,8 @@ class YoutubeApiClient {
   }, 'https://www.youtube.com/youtubei/v1/player?key=AIzaSyB-63vPrdThhKuerbB2N_l7Kwwcxj6yUAc&prettyPrint=false');
 
   /// This provides also muxed streams but seems less reliable than [ios].
-  /// If you require an android client use [androidVr] instead.
+  /// Prefer [androidVr] — CDN often rejects adaptive URLs from this client with HTTP 403.
   /// Note: This client includes androidSdkVersion which may require PO Token.
-  /// Consider using [androidSdkless] instead for better compatibility.
   static const android = YoutubeApiClient({
     'context': {
       'client': {
@@ -60,9 +59,10 @@ class YoutubeApiClient {
   }, 'https://www.youtube.com/youtubei/v1/player?prettyPrint=false');
 
   /// Android client without androidSdkVersion field.
-  /// This client doesn't require a PO Token and provides better compatibility
-  /// for streaming audio/video without 403 errors.
-  /// Based on yt-dlp's android_sdkless client.
+  /// Formerly used as a PO-Token-free default, but YouTube's CDN now often
+  /// rejects its adaptive (audio/video-only) stream URLs with HTTP 403 while
+  /// muxed streams may still work. Prefer [androidVr].
+  /// Based on yt-dlp's removed android_sdkless client.
   static const androidSdkless = YoutubeApiClient({
     'context': {
       'client': {
@@ -96,7 +96,9 @@ class YoutubeApiClient {
     },
   }, 'https://music.youtube.com/youtubei/v1/player?key=AIzaSyAOghZGza2MQSZkY_zfZ370N-PUdXEo8AI&prettyPrint=false');
 
-  /// Provides high quality videos (not only VR).
+  /// Default client for stream manifests. Provides muxed and adaptive streams
+  /// without requiring a JS challenge solver. Prefer this over [android] /
+  /// [androidSdkless], whose adaptive URLs are frequently rejected with 403.
   static const androidVr = YoutubeApiClient({
     'context': {
       'client': {
