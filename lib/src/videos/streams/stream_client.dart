@@ -96,21 +96,24 @@ class StreamClient {
           'Getting stream manifest for video $videoId with client: ${client.payload['context']['client']['clientName']}');
       try {
         await retry(_httpClient, () async {
-          final streams = await _getStreams(
+          final streams = (await _getStreams(
             videoId,
             ytClient: client,
             requireWatchPage: requireWatchPage,
-          ).toList();
+          ).toList())
+              .where(_hasPlayableUrl)
+              .toList();
           if (streams.isEmpty) {
             throw VideoUnavailableException(
               'Video "$videoId" does not contain any playable streams.',
             );
           }
 
-          final response = await _httpClient.head(streams.first.url);
+          final probe = streams.first;
+          final response = await _httpClient.head(probe.url);
           if (response.statusCode == 403) {
             throw YoutubeExplodeException(
-              'Video $videoId returned 403 (stream: ${streams.first.tag})',
+              'Video $videoId returned 403 (stream: ${probe.tag})',
             );
           }
 
@@ -293,6 +296,13 @@ class StreamClient {
       try {
         url = Uri.parse(stream.url);
       } catch (e) {
+        continue;
+      }
+      // YouTube occasionally returns blank / relative URLs; HEAD-ing those
+      // throws ArgumentError("No host specified in URI") and aborts the client.
+      if (!_isAbsoluteHttpUrl(url)) {
+        _logger.warning(
+            'Skipping stream itag $itag with non-absolute URL: "${stream.url}"');
         continue;
       }
 
@@ -488,4 +498,11 @@ class StreamClient {
       }
     }
   }
+
+  /// Absolute http(s) URL with a non-empty host — safe for [HttpClient] HEAD/GET.
+  static bool _isAbsoluteHttpUrl(Uri url) =>
+      (url.scheme == 'http' || url.scheme == 'https') && url.host.isNotEmpty;
+
+  static bool _hasPlayableUrl(StreamInfo stream) =>
+      _isAbsoluteHttpUrl(stream.url);
 }
