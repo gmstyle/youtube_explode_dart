@@ -32,8 +32,9 @@ class StreamClient {
   ///
   /// See [YoutubeApiClient] for all the possible clients that can be set using the [ytClients] parameter.
   /// If [ytClients] is null the library automatically manages the clients, otherwise only the clients provided are used.
-  /// Currently by default the [YoutubeApiClient.androidVr] client is used,
-  /// and if a js solver is provided the [YoutubeApiClient.safari] is used additionally.
+  /// Currently by default the [YoutubeApiClient.visionos] client is used,
+  /// with [YoutubeApiClient.androidVr] as fallback when [ytClients] is null.
+  /// If a js solver is provided, [YoutubeApiClient.safari] is used additionally.
   ///
   ///
   /// Note: if using any android client youtube often prevents downloading the same stream multiple times or downloading more than one stream from the same manifest.
@@ -67,7 +68,8 @@ class StreamClient {
         'ytClients cannot be an empty list');
 
     videoId = VideoId.fromString(videoId);
-    final clients = ytClients ?? [YoutubeApiClient.androidVr];
+    final clients = ytClients ??
+        [YoutubeApiClient.visionos, YoutubeApiClient.androidVr];
 
     if (_jsChallengeSolver != null && ytClients == null) {
       clients.add(YoutubeApiClient.safari);
