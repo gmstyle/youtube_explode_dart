@@ -15,13 +15,15 @@ YoutubeExplode is a library that provides an interface to query metadata of YouT
 
 - Retrieve metadata on videos, playlists, channels, streams, and closed captions
 - Execute search queries and get resulting videos.
-- Get or download video streams.
+- Get or download video streams (including 2025+ PO tokens and SABR on desktop).
 - Get closed captions.
 - Get video comments.
 
 ## Usage
 - [Install](#install)
 - [Downloading a video stream](#downloading-a-video-stream)
+- [Using a signature solver](#using-a-signature-solver)
+- [PO tokens, clients, and SABR (2025+)](#po-tokens-clients-and-sabr-2025)
 - [Working with playlists](#working-with-playlists)
 - [Extracting closed captions](#extracting-closed-captions)
 - [Getting comments](#get-comments)
@@ -124,10 +126,89 @@ import 'package:youtube_explode_dart/solvers.dart';
 
 final solver = await DenoEJSSolver.init();
 var yt = YoutubeExplode(jsSolver: solver);
-
 ```
 
+### PO tokens, clients, and SABR (2025+)
 
+Since 2025 YouTube often requires **Proof-of-Origin (PO) tokens** for WEB clients and may deliver adaptive streams via **SABR** (no direct `videoplayback` URL). This fork follows a yt-dlp-style cascade:
+
+1. **Tier 1 — `visionos`**: direct HTTPS URLs, no PO token / Deno required (works for many videos).
+2. **Tier 2 — WEB (`safari`) + PO token**: content-bound `/player` session; appends `pot=` on stream URLs.
+3. **Tier 3 — SABR**: used only when tier 1 has no direct HTTPS streams (desktop Deno + `@luanrt/googlevideo`).
+
+Fallbacks such as `webEmbedded` / `tvDowngraded` may be appended for made-for-kids or age-gated videos.
+
+#### Desktop / CLI (recommended)
+
+Requires [Deno](https://deno.land) on `PATH` (or `~/.deno/bin/deno`).
+
+```dart
+final yt = await YoutubeExplodeFactory.openDesktop();
+try {
+  final manifest = await yt.videos.streamsClient.getManifest(videoId);
+  // Prefers HTTPS audio/muxed; SABR only as last resort.
+  final stream = manifest.bestDownloadableAudio!;
+  // Direct HTTPS only (never SABR):
+  // final stream = manifest.bestDirectDownloadableAudio!;
+  await for (final chunk in yt.videos.streamsClient.get(stream)) {
+    // write chunk
+  }
+} finally {
+  yt.close();
+}
+```
+
+`openDesktop()` wires Deno EJS (n-sig), Deno PO tokens (with LRU cache), and the SABR downloader.
+
+On Flutter desktop, copy the bundled scripts from assets and pass their paths:
+
+```dart
+final yt = await YoutubeExplodeFactory.openDesktop(
+  poTokenScriptPath: await preparePoScriptFromAsset(),
+  sabrScriptPath: await prepareSabrScriptFromAsset(),
+);
+```
+
+See `example/video_download_flutter` for asset helpers.
+
+#### Mobile (Android / iOS)
+
+There is no WebView PO provider inside the package. Implement `BasePoTokenProvider` (and usually a JS challenge solver) in the app — the example uses a headless WebView:
+
+```dart
+final provider = await WebViewPoTokenProvider.create(); // from the example app
+final jsSolver = await WebViewEJSSolver.create();
+final yt = YoutubeExplode(
+  poTokenProvider: provider,
+  jsSolver: jsSolver,
+);
+```
+
+Without a PO provider, the library still tries **tier 1 (`visionos`)** first. That is often enough for downloads; enable PO/JS when WEB adaptive or SABR is required.
+
+#### Custom wiring
+
+```dart
+final yt = YoutubeExplode(
+  jsSolver: await DenoEJSSolver.init(),
+  poTokenProvider: CachingPoTokenProvider(
+    await DenoPoTokenProvider.init(),
+  ),
+  sabrDownloader: await DenoSabrDownloader.init(),
+);
+```
+
+To force WEB / SABR-only manifests (for testing):
+
+```dart
+final manifest = await yt.videos.streamsClient.getManifest(
+  videoId,
+  ytClients: [YoutubeApiClient.safari],
+);
+final sabrAudio = manifest.sabr.whereType<SabrAudioStreamInfo>().withHighestBitrate();
+```
+
+SABR downloads require a `sabrDownloader` (desktop Deno). On Android the example currently wires WebView PO + EJS only — SABR is not supported there yet.
 
 ### Working with playlists
 Among other things, YoutubeExplode also supports playlists:

@@ -4,10 +4,8 @@ import 'dart:io';
 import 'package:logging/logging.dart';
 import 'package:youtube_explode_dart/solvers.dart';
 import 'package:youtube_explode_dart/src/extensions/helpers_extension.dart';
-import 'package:youtube_explode_dart/src/reverse_engineering/youtube_http_client.dart';
 import 'package:youtube_explode_dart/src/reverse_engineering/pages/watch_page.dart';
 import 'package:youtube_explode_dart/src/videos/video_controller.dart';
-import 'package:youtube_explode_dart/src/videos/youtube_api_client.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
 Future<String> resolveDenoExe() async {
