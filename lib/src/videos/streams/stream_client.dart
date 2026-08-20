@@ -92,16 +92,19 @@ class StreamClient {
     );
 
     Object? lastException;
+    String? hlsManifestUrl;
 
     for (final client in clients) {
       _logger.fine(
           'Getting stream manifest for video $videoId with client: ${client.payload['context']['client']['clientName']}');
       try {
         await retry(_httpClient, () async {
+          String? hlsUrlCandidate;
           final streams = (await _getStreams(
             videoId,
             ytClient: client,
             requireWatchPage: requireWatchPage,
+            onHlsManifest: (url) => hlsUrlCandidate = url,
           ).toList())
               .where(_hasPlayableUrl)
               .toList();
@@ -134,6 +137,7 @@ class StreamClient {
             }
           }
           uniqueStreams.addAll(streams);
+          hlsManifestUrl ??= hlsUrlCandidate;
         });
       } catch (e, s) {
         _logger.severe(
@@ -157,7 +161,8 @@ class StreamClient {
           VideoUnavailableException(
               'Video "$videoId" has no available streams');
     }
-    return StreamManifest(uniqueStreams.toList());
+    return StreamManifest(uniqueStreams.toList(),
+        hlsManifestUrl: hlsManifestUrl);
   }
 
   /// Gets the HTTP Live Stream (HLS) manifest URL
@@ -195,16 +200,18 @@ class StreamClient {
 
   Stream<StreamInfo> _getStreams(VideoId videoId,
       {required YoutubeApiClient ytClient,
-      bool requireWatchPage = true}) async* {
+      bool requireWatchPage = true,
+      void Function(String? hlsManifestUrl)? onHlsManifest}) async* {
     // Use await for instead of yield* to catch exceptions
-    await for (final stream
-        in _getStream(videoId, ytClient, requireWatchPage: requireWatchPage)) {
+    await for (final stream in _getStream(videoId, ytClient,
+        requireWatchPage: requireWatchPage, onHlsManifest: onHlsManifest)) {
       yield stream;
     }
   }
 
   Stream<StreamInfo> _getStream(VideoId videoId, YoutubeApiClient ytClient,
-      {bool requireWatchPage = true}) async* {
+      {bool requireWatchPage = true,
+      void Function(String? hlsManifestUrl)? onHlsManifest}) async* {
     WatchPage? watchPage;
     if (requireWatchPage) {
       watchPage = await WatchPage.get(_httpClient, videoId.value);
@@ -229,6 +236,7 @@ class StreamClient {
         reason: playerResponse.videoPlayabilityError ?? '',
       );
     }
+    onHlsManifest?.call(playerResponse.hlsManifestUrl);
     yield* _parseStreamInfo(playerResponse.streams,
         watchPage: watchPage, videoId: videoId);
 
