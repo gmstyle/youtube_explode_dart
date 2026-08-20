@@ -3,9 +3,6 @@ import 'package:http_parser/http_parser.dart';
 import '../../../../reverse_engineering/models/fragment.dart';
 import '../../../../reverse_engineering/sabr/sabr_stream_context.dart';
 import '../../../video_id.dart';
-import '../../mixins/sabr_stream_info.dart';
-import '../../mixins/stream_info.dart';
-import '../../mixins/video_stream_info.dart';
 import '../../streams.dart';
 
 /// YouTube media stream delivered via SABR (video-only).

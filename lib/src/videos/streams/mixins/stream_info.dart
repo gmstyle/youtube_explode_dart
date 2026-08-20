@@ -4,7 +4,6 @@ import '../../../reverse_engineering/models/fragment.dart';
 import '../../videos.dart';
 import '../models/audio_track.dart';
 import 'hls_stream_info.dart';
-import 'sabr_stream_info.dart';
 
 /// Generic YouTube media stream.
 mixin StreamInfo {
