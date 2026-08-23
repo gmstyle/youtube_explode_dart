@@ -44,9 +44,11 @@ class StreamClient {
   ///
   /// See [YoutubeApiClient] for all the possible clients that can be set using the [ytClients] parameter.
   /// If [ytClients] is null the library automatically manages the clients, otherwise only the clients provided are used.
-  /// Currently by default the [YoutubeApiClient.visionos] client is used,
-  /// with [YoutubeApiClient.androidVr] as fallback when [ytClients] is null.
-  /// If a js solver is provided, [YoutubeApiClient.safari] is used additionally.
+  /// By default [YoutubeApiClient.visionos] is tried first (direct HTTPS).
+  /// When a [BasePoTokenProvider] or JS solver is configured, [safari] (WEB)
+  /// is also tried for PO/SABR adaptive delivery (2025+).
+  /// Made-for-kids and age-gated videos may append [webEmbedded] and
+  /// [tvDowngraded] dynamically (yt-dlp-style fallbacks).
   ///
   ///
   /// Note: if using any android client youtube often prevents downloading the same stream multiple times or downloading more than one stream from the same manifest.
@@ -80,15 +82,10 @@ class StreamClient {
         'ytClients cannot be an empty list');
 
     videoId = VideoId.fromString(videoId);
-    final clients = ytClients ??
-        (_poTokenProvider != null
-            ? [YoutubeApiClient.safari]
-            : [YoutubeApiClient.visionos, YoutubeApiClient.androidVr]);
 
-    if (_jsChallengeSolver != null &&
-        ytClients == null &&
-        _poTokenProvider == null) {
-      clients.add(YoutubeApiClient.safari);
+    WatchPage? sharedWatchPage;
+    if (requireWatchPage && ytClients == null) {
+      sharedWatchPage = await WatchPage.get(_httpClient, videoId.value);
     }
 
     final clientQueue = Queue<YoutubeApiClient>.from(
@@ -113,6 +110,7 @@ class StreamClient {
     );
 
     Object? lastException;
+    var hasDirectHttps = false;
     String? hlsManifestUrl;
 
     while (clientQueue.isNotEmpty) {
@@ -148,12 +146,13 @@ class StreamClient {
             (s) => s is! SabrStreamInfo,
             orElse: () => streams.first,
           );
-(??)          if (_poTokenProvider == null &&
-(??)              !streams.any((s) => s is SabrStreamInfo)) {
-(??)            final response = await _httpClient.head(probe.url);
-(??)            if (response.statusCode == 403) {
+          if (_poTokenProvider == null &&
+              !streams.any((s) => s is SabrStreamInfo) &&
+              probe is! SabrStreamInfo) {
+            final response = await _httpClient.head(probe.url);
+            if (response.statusCode == 403) {
               throw YoutubeExplodeException(
-                'Video $videoId returned 403 (stream: ${adaptive.tag})',
+                'Video $videoId returned 403 (stream: ${probe.tag})',
               );
             }
 
@@ -347,22 +346,37 @@ class StreamClient {
     yield* _httpClient.getStream(streamInfo, streamClient: this);
   }
 
-(??)  Stream<StreamInfo> _getStreams(VideoId videoId,
-(??)      {required YoutubeApiClient ytClient,
-(??)      bool requireWatchPage = true}) async* {
-(??)    // Use await for instead of yield* to catch exceptions
-(??)    await for (final stream
-(??)        in _getStream(videoId, ytClient, requireWatchPage: requireWatchPage)) {
+  Stream<StreamInfo> _getStreams(
+    VideoId videoId, {
+    required YoutubeApiClient ytClient,
+    bool requireWatchPage = true,
+    WatchPage? watchPage,
+    bool skipSabr = false,
+    void Function(String? hlsManifestUrl)? onHlsManifest,
+  }) async* {
+    await for (final stream in _getStream(
+      videoId,
+      ytClient,
+      requireWatchPage: requireWatchPage,
+      watchPage: watchPage,
+      skipSabr: skipSabr,
+      onHlsManifest: onHlsManifest,
+    )) {
       yield stream;
     }
   }
 
-(??)  Stream<StreamInfo> _getStream(VideoId videoId, YoutubeApiClient ytClient,
-(??)      {bool requireWatchPage = true}) async* {
-(??)    WatchPage? watchPage;
-(??)    if (requireWatchPage) {
-(??)      watchPage = await WatchPage.get(_httpClient, videoId.value);
-(??)    }
+  Stream<StreamInfo> _getStream(
+    VideoId videoId,
+    YoutubeApiClient ytClient, {
+    bool requireWatchPage = true,
+    WatchPage? watchPage,
+    bool skipSabr = false,
+    void Function(String? hlsManifestUrl)? onHlsManifest,
+  }) async* {
+    watchPage ??= requireWatchPage
+        ? await WatchPage.get(_httpClient, videoId.value)
+        : null;
 
     final usesPoToken = YoutubeClientPoPolicy.usesWebPoToken(ytClient);
 
