@@ -1,3 +1,5 @@
+import 'po_token_policy.dart';
+
 /// Context data extracted from the YouTube watch page,
 /// needed to generate a content-bound PO Token via BotGuard.
 class PoTokenContext {
@@ -35,41 +37,21 @@ class PoTokenContext {
 
 /// Abstract interface for providing YouTube Proof-of-Origin (PO) tokens.
 ///
-/// YouTube requires a content-bound PO token for most InnerTube clients
-/// (iOS, Android, Web, etc.) in order to access video streams without
-/// receiving HTTP 403 errors from the Google Video Server (GVS).
+/// YouTube requires a content-bound PO token for most WEB InnerTube clients
+/// in order to access video streams without HTTP 403 from the GVS CDN.
 ///
-/// Implement this class to integrate PO token generation into your app.
-/// The token is generated per-video by running Google's BotGuard JS challenge
-/// in a real JavaScript environment (e.g. a WebView on mobile/desktop).
-///
-/// ## Example using bgutils-js in a WebView (Flutter)
-///
-/// ```dart
-/// class MyPoTokenProvider extends BasePoTokenProvider {
-///   @override
-///   Future<String> generatePoToken(String videoId, PoTokenContext context) async {
-///     // Run bgutils-js inside a headless WebView and return the minted token.
-///     // See: https://github.com/LuanRT/BgUtils
-///     final token = await myWebViewBridge.generateToken(videoId, context);
-///     return token;
-///   }
-/// }
-/// ```
-///
-/// Then pass it to [YoutubeExplode]:
-/// ```dart
-/// final yt = YoutubeExplode(poTokenProvider: MyPoTokenProvider());
-/// ```
+/// Use [PoTokenKind.player] for `/player` requests and [PoTokenKind.gvs] for
+/// stream URL `?pot=` / manifest `/pot/{token}` (see [YoutubeClientPoPolicy]).
 abstract class BasePoTokenProvider {
   /// Generates a content-bound PO Token for the given [videoId].
   ///
-  /// [videoId] is the YouTube video ID (e.g. `dQw4w9WgXcQ`).
-  /// [context] contains the InnerTube context data extracted from the watch
-  /// page, needed as input to the BotGuard challenge.
-  ///
-  /// Returns the PO token as a websafe base64 string.
-  Future<String> generatePoToken(String videoId, PoTokenContext context);
+  /// [kind] distinguishes player vs GVS contexts (yt-dlp uses separate tokens;
+  /// most providers return the same token for both).
+  Future<String> generatePoToken(
+    String videoId,
+    PoTokenContext context, {
+    PoTokenKind kind = PoTokenKind.gvs,
+  });
 
   /// Optional cleanup. Called when [YoutubeExplode.close] is invoked.
   void dispose() {}

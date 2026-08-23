@@ -10,6 +10,7 @@ import '../../reverse_engineering/heuristics.dart';
 import '../../reverse_engineering/models/stream_info_provider.dart';
 import '../../reverse_engineering/pages/watch_page.dart';
 import '../../reverse_engineering/player/player_response.dart';
+import '../../reverse_engineering/po_token/po_token_policy.dart';
 import '../../reverse_engineering/po_token/po_token_provider.dart';
 import '../../reverse_engineering/sabr/sabr_downloader.dart';
 import '../../reverse_engineering/sabr/sabr_stream_context.dart';
@@ -90,6 +91,11 @@ class StreamClient {
       clients.add(YoutubeApiClient.safari);
     }
 
+    final clientQueue = Queue<YoutubeApiClient>.from(
+      ytClients ?? _initialClients(sharedWatchPage),
+    );
+    final triedClients = <YoutubeApiClient>{};
+
     final uniqueStreams = LinkedHashSet<StreamInfo>(
       equals: (a, b) {
         if (a.runtimeType != b.runtimeType) return false;
@@ -109,7 +115,10 @@ class StreamClient {
     Object? lastException;
     String? hlsManifestUrl;
 
-    for (final client in clients) {
+    while (clientQueue.isNotEmpty) {
+      final client = clientQueue.removeFirst();
+      if (!triedClients.add(client)) continue;
+
       _logger.fine(
           'Getting stream manifest for video $videoId with client: ${client.payload['context']['client']['clientName']}');
       try {
@@ -118,7 +127,9 @@ class StreamClient {
           final streams = (await _getStreams(
             videoId,
             ytClient: client,
-            requireWatchPage: requireWatchPage,
+            requireWatchPage: ytClients != null ? requireWatchPage : false,
+            watchPage: sharedWatchPage,
+            skipSabr: hasDirectHttps,
             onHlsManifest: (url) => hlsUrlCandidate = url,
           ).toList())
               .where(_hasPlayableUrl)
@@ -129,23 +140,18 @@ class StreamClient {
             );
           }
 
-          final probe = streams.first;
-          final response = await _httpClient.head(probe.url);
-          if (response.statusCode == 403) {
-            throw YoutubeExplodeException(
-              'Video $videoId returned 403 (stream: ${probe.tag})',
-            );
+          if (streams.any((s) => s is! SabrStreamInfo)) {
+            hasDirectHttps = true;
           }
 
-          // Muxed-only HEAD can hide CDN 403s on adaptive URLs (e.g. androidSdkless).
-          final adaptive = streams.cast<StreamInfo?>().firstWhere(
-                (s) =>
-                    s is AudioOnlyStreamInfo || s is VideoOnlyStreamInfo,
-                orElse: () => null,
-              );
-          if (adaptive != null) {
-            final adaptiveHead = await _httpClient.head(adaptive.url);
-            if (adaptiveHead.statusCode == 403) {
+          final probe = streams.firstWhere(
+            (s) => s is! SabrStreamInfo,
+            orElse: () => streams.first,
+          );
+(??)          if (_poTokenProvider == null &&
+(??)              !streams.any((s) => s is SabrStreamInfo)) {
+(??)            final response = await _httpClient.head(probe.url);
+(??)            if (response.statusCode == 403) {
               throw YoutubeExplodeException(
                 'Video $videoId returned 403 (stream: ${adaptive.tag})',
               );
@@ -175,13 +181,27 @@ class StreamClient {
             e,
             s);
         lastException = e;
+        _appendDynamicFallbackClients(
+          clientQueue,
+          triedClients,
+          client,
+          sharedWatchPage,
+        );
       }
     }
 
-    // If the user has not provided any client retry with the tv which work also in some restricted videos.
-    // Skip this when using a PO token provider: tokens are bound to the WEB watch-page session.
-    if (uniqueStreams.isEmpty && ytClients == null && _poTokenProvider == null) {
-      return getManifest(videoId, ytClients: [YoutubeApiClient.tv]);
+    // Last-resort TV clients for restricted videos (no PO provider — tokens are WEB-bound).
+    if (uniqueStreams.isEmpty &&
+        ytClients == null &&
+        _poTokenProvider == null) {
+      return getManifest(
+        videoId,
+        ytClients: [
+          YoutubeApiClient.tvDowngraded,
+          YoutubeApiClient.tv,
+        ],
+        requireWatchPage: requireWatchPage,
+      );
     }
     if (uniqueStreams.isEmpty) {
       if (lastException is Error && lastException.stackTrace != null) {
@@ -194,6 +214,69 @@ class StreamClient {
     }
     return StreamManifest(uniqueStreams.toList(),
         hlsManifestUrl: hlsManifestUrl);
+  }
+
+  /// Default innertube clients (yt-dlp Jan 2026: visionos, then WEB when configured).
+  List<YoutubeApiClient> _defaultClients() {
+    final clients = <YoutubeApiClient>[YoutubeApiClient.visionos];
+    if (_poTokenProvider != null || _jsChallengeSolver != null) {
+      clients.add(YoutubeApiClient.safari);
+    }
+    return clients;
+  }
+
+  /// Builds the initial client queue including static and watch-page fallbacks.
+  List<YoutubeApiClient> _initialClients(WatchPage? watchPage) {
+    final clients = _defaultClients();
+    if (watchPage == null) return clients;
+
+    if (watchPage.isMadeForKids &&
+        (_jsChallengeSolver != null || _poTokenProvider != null)) {
+      _appendClientIfAbsent(clients, YoutubeApiClient.webEmbedded);
+      _appendClientIfAbsent(clients, YoutubeApiClient.tvDowngraded);
+    }
+    if (watchPage.playerResponse?.isAgeGated ?? false) {
+      _appendClientIfAbsent(clients, YoutubeApiClient.webEmbedded);
+    }
+    return clients;
+  }
+
+  void _appendClientIfAbsent(
+    List<YoutubeApiClient> clients,
+    YoutubeApiClient client,
+  ) {
+    if (!clients.contains(client)) clients.add(client);
+  }
+
+  void _enqueueClientIfAbsent(
+    Queue<YoutubeApiClient> queue,
+    Set<YoutubeApiClient> tried,
+    YoutubeApiClient client,
+  ) {
+    if (!tried.contains(client) && !queue.contains(client)) {
+      queue.add(client);
+    }
+  }
+
+  void _appendDynamicFallbackClients(
+    Queue<YoutubeApiClient> queue,
+    Set<YoutubeApiClient> tried,
+    YoutubeApiClient failedClient,
+    WatchPage? watchPage,
+  ) {
+    if (watchPage == null) return;
+
+    if (watchPage.isMadeForKids &&
+        (failedClient == YoutubeApiClient.visionos ||
+            failedClient == YoutubeApiClient.androidVr) &&
+        (_jsChallengeSolver != null || _poTokenProvider != null)) {
+      _enqueueClientIfAbsent(queue, tried, YoutubeApiClient.webEmbedded);
+      _enqueueClientIfAbsent(queue, tried, YoutubeApiClient.tvDowngraded);
+    }
+
+    if (watchPage.playerResponse?.isAgeGated ?? false) {
+      _enqueueClientIfAbsent(queue, tried, YoutubeApiClient.webEmbedded);
+    }
   }
 
   /// Gets the HTTP Live Stream (HLS) manifest URL
@@ -264,35 +347,32 @@ class StreamClient {
     yield* _httpClient.getStream(streamInfo, streamClient: this);
   }
 
-  Stream<StreamInfo> _getStreams(VideoId videoId,
-      {required YoutubeApiClient ytClient,
-      bool requireWatchPage = true,
-      void Function(String? hlsManifestUrl)? onHlsManifest}) async* {
-    // Use await for instead of yield* to catch exceptions
-    await for (final stream in _getStream(videoId, ytClient,
-        requireWatchPage: requireWatchPage, onHlsManifest: onHlsManifest)) {
+(??)  Stream<StreamInfo> _getStreams(VideoId videoId,
+(??)      {required YoutubeApiClient ytClient,
+(??)      bool requireWatchPage = true}) async* {
+(??)    // Use await for instead of yield* to catch exceptions
+(??)    await for (final stream
+(??)        in _getStream(videoId, ytClient, requireWatchPage: requireWatchPage)) {
       yield stream;
     }
   }
 
-  Stream<StreamInfo> _getStream(VideoId videoId, YoutubeApiClient ytClient,
-      {bool requireWatchPage = true,
-      void Function(String? hlsManifestUrl)? onHlsManifest}) async* {
-    WatchPage? watchPage;
-    if (requireWatchPage) {
-      watchPage = await WatchPage.get(_httpClient, videoId.value);
-    }
+(??)  Stream<StreamInfo> _getStream(VideoId videoId, YoutubeApiClient ytClient,
+(??)      {bool requireWatchPage = true}) async* {
+(??)    WatchPage? watchPage;
+(??)    if (requireWatchPage) {
+(??)      watchPage = await WatchPage.get(_httpClient, videoId.value);
+(??)    }
 
-    // Generate a single content-bound PO Token for this video before the
-    // /player request, so the same token can be injected in the request body
-    // (serviceIntegrityDimensions) and appended to every stream URL (pot=).
-    String? poToken;
-    if (_poTokenProvider != null && watchPage != null) {
+    final usesPoToken = YoutubeClientPoPolicy.usesWebPoToken(ytClient);
+
+    String? playerPoToken;
+    String? gvsPoToken;
+    if (_poTokenProvider != null && watchPage != null && usesPoToken) {
       try {
-        final innertubeCtx = watchPage.ytCfg['INNERTUBE_CONTEXT']
-            as Map<String, dynamic>? ?? {};
-        final clientCtx =
-            innertubeCtx['client'] as Map<String, dynamic>? ?? {};
+        final innertubeCtx =
+            watchPage.ytCfg['INNERTUBE_CONTEXT'] as Map<String, dynamic>? ?? {};
+        final clientCtx = innertubeCtx['client'] as Map<String, dynamic>? ?? {};
         final context = PoTokenContext(
           visitorData: clientCtx['visitorData'] as String? ?? '',
           clientVersion: clientCtx['clientVersion'] as String? ?? '',
@@ -300,21 +380,33 @@ class StreamClient {
           ytConfig: watchPage.ytCfg,
           initialAttestationDataSource: watchPage.initialAttestationDataSource,
         );
-        poToken =
-            await _poTokenProvider!.generatePoToken(videoId.value, context);
-        _logger.fine('Generated PO Token for video ${videoId.value}');
+        playerPoToken = await _poTokenProvider!.generatePoToken(
+          videoId.value,
+          context,
+          kind: PoTokenKind.player,
+        );
+        gvsPoToken = await _poTokenProvider!.generatePoToken(
+          videoId.value,
+          context,
+          kind: PoTokenKind.gvs,
+        );
+        _logger.fine('Generated PO tokens for video ${videoId.value}');
       } catch (e) {
         _logger.warning('Failed to generate PO Token: $e');
       }
     }
 
-    final playerClient = poToken != null && watchPage != null
-        ? _webClientFromWatchPage(watchPage)
-        : ytClient;
+    final playerClient =
+        playerPoToken != null && watchPage != null && usesPoToken
+            ? _webClientFromWatchPage(watchPage)
+            : ytClient;
 
     final playerResponse = await _controller.getPlayerResponse(
-        videoId, playerClient,
-        watchPage: watchPage, poToken: poToken);
+      videoId,
+      playerClient,
+      watchPage: watchPage,
+      poToken: playerPoToken,
+    );
 
     if (!playerResponse.previewVideoId.isNullOrWhiteSpace) {
       throw VideoRequiresPurchaseException.preview(
@@ -334,37 +426,76 @@ class StreamClient {
       );
     }
     onHlsManifest?.call(playerResponse.hlsManifestUrl);
-    yield* _parseStreamInfo(playerResponse.streams,
-        watchPage: watchPage, videoId: videoId, poToken: poToken);
+    yield* _parseStreamInfo(
+      playerResponse.streams,
+      watchPage: watchPage,
+      videoId: videoId,
+      gvsPoToken: gvsPoToken,
+      ytClient: ytClient,
+    );
 
-    if (_sabrDownloader != null &&
-        poToken != null &&
+    if (!skipSabr &&
+        _sabrDownloader != null &&
+        gvsPoToken != null &&
         watchPage != null &&
         playerResponse.hasSabrStreaming) {
       yield* _parseSabrStreams(
         playerResponse: playerResponse,
         watchPage: watchPage,
         videoId: videoId,
-        poToken: poToken,
+        poToken: gvsPoToken,
       );
     }
 
-    if (!playerResponse.dashManifestUrl.isNullOrWhiteSpace) {
-      final dashManifest =
-          await _controller.getDashManifest(playerResponse.dashManifestUrl!);
-      yield* _parseStreamInfo(dashManifest.streams,
-          watchPage: watchPage, videoId: videoId, poToken: poToken);
+    if (!playerResponse.dashManifestUrl.isNullOrWhiteSpace &&
+        watchPage != null) {
+      final dashUrl = await _prepareManifestUrl(
+        playerResponse.dashManifestUrl!,
+        watchPage,
+        gvsPoToken,
+        ytClient,
+        StreamingProtocol.dash,
+      );
+      if (dashUrl != null) {
+        final dashManifest = await _controller.getDashManifest(dashUrl);
+        yield* _parseStreamInfo(
+          dashManifest.streams,
+          watchPage: watchPage,
+          videoId: videoId,
+          gvsPoToken: gvsPoToken,
+          ytClient: ytClient,
+        );
+      }
     }
-    if (!playerResponse.hlsManifestUrl.isNullOrWhiteSpace) {
-      final hlsManifest =
-          await _controller.getHlsManifest(playerResponse.hlsManifestUrl!);
-      yield* _parseStreamInfo(hlsManifest.streams,
-          watchPage: watchPage, videoId: videoId, poToken: poToken);
+    if (!playerResponse.hlsManifestUrl.isNullOrWhiteSpace &&
+        watchPage != null) {
+      final hlsUrl = await _prepareManifestUrl(
+        playerResponse.hlsManifestUrl!,
+        watchPage,
+        gvsPoToken,
+        ytClient,
+        StreamingProtocol.hls,
+      );
+      if (hlsUrl != null) {
+        final hlsManifest = await _controller.getHlsManifest(hlsUrl);
+        yield* _parseStreamInfo(
+          hlsManifest.streams,
+          watchPage: watchPage,
+          videoId: videoId,
+          gvsPoToken: gvsPoToken,
+          ytClient: ytClient,
+        );
+      }
     }
   }
 
-  Stream<StreamInfo> _parseStreamInfo(Iterable<StreamInfoProvider> streams,
-      {WatchPage? watchPage, VideoId? videoId, String? poToken}) async* {
+  Stream<StreamInfo> _parseStreamInfo(
+    Iterable<StreamInfoProvider> streams, {
+    WatchPage? watchPage,
+    VideoId? videoId,
+    String? gvsPoToken,
+    YoutubeApiClient? ytClient,
+  }) async* {
     // First pass: collect all unique challenges
     final nChallenges = <String>{};
     final sigChallenges = <String>{};
@@ -470,17 +601,21 @@ class StreamClient {
         }
       }
 
-      // Append GVS PO Token to the stream URL so the CDN accepts the request.
-      if (poToken != null) {
-        url = url.setQueryParam('pot', poToken);
+      // Append GVS PO Token when client policy requires it (WEB tier).
+      if (gvsPoToken != null &&
+          ytClient != null &&
+          YoutubeClientPoPolicy.shouldAppendGvsPoToken(
+            ytClient,
+            StreamingProtocol.https,
+            gvsPoToken,
+          )) {
+        url = url.setQueryParam('pot', gvsPoToken);
       }
 
       var contentLength = stream.contentLength ??
           (await _httpClient.getContentLength(url, validate: false));
 
-      // WEB + PO token often returns muxed URLs whose HEAD fails until n-sig is
-      // decoded, but GET with pot= may still work. Keep muxed streams in that case.
-      if ((contentLength == null || contentLength <= 0) && poToken != null) {
+      if ((contentLength == null || contentLength <= 0) && gvsPoToken != null) {
         final isMuxed = stream.source != StreamSource.adaptive &&
             !stream.audioCodec.isNullOrWhiteSpace &&
             !stream.videoCodec.isNullOrWhiteSpace;
@@ -704,10 +839,10 @@ class StreamClient {
       contentLength ??= 1;
       final fileSize = FileSize(contentLength);
 
-      if (!videoCodec.isNullOrWhiteSpace &&
-          audioCodec.isNullOrWhiteSpace) {
+      if (!videoCodec.isNullOrWhiteSpace && audioCodec.isNullOrWhiteSpace) {
         final framerate = Framerate(stream.framerate ?? 24);
-        final videoQuality = VideoQualityUtil.fromLabel(stream.qualityLabel ?? '');
+        final videoQuality =
+            VideoQualityUtil.fromLabel(stream.qualityLabel ?? '');
         final videoWidth = stream.videoWidth;
         final videoHeight = stream.videoHeight;
         final videoResolution = videoWidth != null && videoHeight != null
@@ -733,8 +868,7 @@ class StreamClient {
         continue;
       }
 
-      if (!audioCodec.isNullOrWhiteSpace &&
-          videoCodec.isNullOrWhiteSpace) {
+      if (!audioCodec.isNullOrWhiteSpace && videoCodec.isNullOrWhiteSpace) {
         yield SabrAudioStreamInfo(
           videoId: videoId,
           tag: itag,
@@ -751,6 +885,34 @@ class StreamClient {
         );
       }
     }
+  }
+
+  Future<String?> _prepareManifestUrl(
+    String rawUrl,
+    WatchPage watchPage,
+    String? gvsPoToken,
+    YoutubeApiClient ytClient,
+    StreamingProtocol protocol,
+  ) async {
+    final deciphered = await _decipherUrlIfNeeded(rawUrl, watchPage);
+    if (deciphered == null) return null;
+
+    if (gvsPoToken != null &&
+        YoutubeClientPoPolicy.shouldAppendGvsPoToken(
+          ytClient,
+          protocol,
+          gvsPoToken,
+        )) {
+      return _appendGvsPoToManifestPath(deciphered, gvsPoToken);
+    }
+    return deciphered;
+  }
+
+  /// yt-dlp appends `/pot/{token}` to DASH/HLS manifest paths for WEB clients.
+  static String _appendGvsPoToManifestPath(String url, String poToken) {
+    final uri = Uri.parse(url);
+    final basePath = uri.path.endsWith('/') ? uri.path : '${uri.path}/';
+    return uri.replace(path: '${basePath}pot/$poToken').toString();
   }
 
   Future<String?> _decipherUrlIfNeeded(
@@ -778,27 +940,37 @@ class StreamClient {
   }
 
   /// Re-fetches watch page, PO token and /player to build a fresh [SabrStreamInfo].
-  Future<SabrStreamInfo> _fetchFreshSabrStream(SabrStreamInfo streamInfo) async {
+  Future<SabrStreamInfo> _fetchFreshSabrStream(
+      SabrStreamInfo streamInfo) async {
     if (_poTokenProvider == null) return streamInfo;
 
     final videoId = streamInfo.videoId;
     final watchPage = await WatchPage.get(_httpClient, videoId.value);
 
-    String? poToken;
+    String? gvsPoToken;
+    String? playerPoToken;
+    late final PoTokenContext context;
     try {
       final innertubeCtx =
           watchPage.ytCfg['INNERTUBE_CONTEXT'] as Map<String, dynamic>? ?? {};
-      final clientCtx =
-          innertubeCtx['client'] as Map<String, dynamic>? ?? {};
-      final context = PoTokenContext(
+      final clientCtx = innertubeCtx['client'] as Map<String, dynamic>? ?? {};
+      context = PoTokenContext(
         visitorData: clientCtx['visitorData'] as String? ?? '',
         clientVersion: clientCtx['clientVersion'] as String? ?? '',
         innertubeContext: innertubeCtx,
         ytConfig: watchPage.ytCfg,
         initialAttestationDataSource: watchPage.initialAttestationDataSource,
       );
-      poToken =
-          await _poTokenProvider!.generatePoToken(videoId.value, context);
+      playerPoToken = await _poTokenProvider!.generatePoToken(
+        videoId.value,
+        context,
+        kind: PoTokenKind.player,
+      );
+      gvsPoToken = await _poTokenProvider!.generatePoToken(
+        videoId.value,
+        context,
+        kind: PoTokenKind.gvs,
+      );
       _logger.fine('Refreshed PO Token for SABR download ${videoId.value}');
     } catch (e) {
       _logger.warning('Failed to refresh PO Token for SABR: $e');
@@ -809,7 +981,7 @@ class StreamClient {
       videoId,
       _webClientFromWatchPage(watchPage),
       watchPage: watchPage,
-      poToken: poToken,
+      poToken: playerPoToken,
     );
 
     if (!playerResponse.hasSabrStreaming) {
@@ -822,7 +994,7 @@ class StreamClient {
       playerResponse: playerResponse,
       watchPage: watchPage,
       videoId: videoId,
-      poToken: poToken,
+      poToken: gvsPoToken,
     )) {
       if (stream.tag == streamInfo.tag &&
           stream.runtimeType == streamInfo.runtimeType) {

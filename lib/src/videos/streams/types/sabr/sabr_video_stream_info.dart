@@ -9,8 +9,7 @@ import '../../mixins/video_stream_info.dart';
 import '../../streams.dart';
 
 /// YouTube media stream delivered via SABR (video-only).
-class SabrVideoStreamInfo
-    with StreamInfo, VideoStreamInfo, SabrStreamInfo {
+class SabrVideoStreamInfo with StreamInfo, VideoStreamInfo, SabrStreamInfo {
   @override
   final VideoId videoId;
 

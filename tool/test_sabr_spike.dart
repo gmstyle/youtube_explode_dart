@@ -85,7 +85,8 @@ Future<String?> decipherUrlIfNeeded(
   var resolved = uri;
   if (uri.queryParameters.containsKey('n')) {
     final n = uri.queryParameters['n']!;
-    final decoded = await solver.solve(watchPage.sourceUrl!, JSChallengeType.n, n);
+    final decoded =
+        await solver.solve(watchPage.sourceUrl!, JSChallengeType.n, n);
     resolved = resolved.setQueryParam('n', decoded);
   }
   return resolved.toString();
@@ -119,9 +120,8 @@ Future<void> main(List<String> args) async {
   final poScript = Platform.script
       .resolve('../example/video_download_flutter/assets/po_token_deno.mjs')
       .toFilePath();
-  final sabrScript = Platform.script
-      .resolve('sabr_spike/sabr_spike.mjs')
-      .toFilePath();
+  final sabrScript =
+      Platform.script.resolve('sabr_spike/sabr_spike.mjs').toFilePath();
 
   stdout.writeln('Video: $videoId');
   stdout.writeln('Deno: $denoExe');
@@ -212,7 +212,8 @@ Future<void> main(List<String> args) async {
     }
 
     if (result == null) {
-      stderr.writeln('SABR spike produced no JSON (exit $exitCode):\n$stdoutText');
+      stderr.writeln(
+          'SABR spike produced no JSON (exit $exitCode):\n$stdoutText');
       exit(1);
     }
 
@@ -252,8 +253,13 @@ class _PoProvider extends BasePoTokenProvider {
   final String _scriptPath;
 
   @override
-  Future<String> generatePoToken(String videoId, PoTokenContext context) async {
-    final proc = await Process.start(_denoExe, ['run', '--allow-net', _scriptPath]);
+  Future<String> generatePoToken(
+    String videoId,
+    PoTokenContext context, {
+    PoTokenKind kind = PoTokenKind.gvs,
+  }) async {
+    final proc =
+        await Process.start(_denoExe, ['run', '--allow-net', _scriptPath]);
     proc.stdin.writeln(jsonEncode({
       'videoId': videoId,
       'context': context.innertubeContext,

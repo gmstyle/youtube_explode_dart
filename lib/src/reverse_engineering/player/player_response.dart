@@ -117,6 +117,19 @@ class PlayerResponse {
       !serverAbrStreamingUrl.isNullOrWhiteSpace &&
       videoPlaybackUstreamerConfig != null;
 
+  /// Age-restricted or login-required (yt-dlp `_is_agegated`).
+  bool get isAgeGated {
+    final status = playabilityStatus.toUpperCase();
+    return status == 'AGE_CHECK_REQUIRED' ||
+        status == 'AGE_VERIFICATION_REQUIRED' ||
+        status == 'LOGIN_REQUIRED';
+  }
+
+  /// Playability failed for this client (not OK / not live offline).
+  bool get isUnplayable =>
+      !isVideoPlayable &&
+      playabilityStatus.toUpperCase() != 'LIVE_STREAM_OFFLINE';
+
   ///
   late final List<StreamInfoProvider> muxedStreams = root
           .getJson<List<dynamic>>('streamingData/formats')

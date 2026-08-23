@@ -54,6 +54,10 @@ class WatchPage extends YoutubePage<WatchPageInitialData> {
   bool get isVideoAvailable =>
       root.querySelector('meta[property="og:url"]') != null;
 
+  /// Whether the watch page HTML indicates a made-for-kids video (yt-dlp check).
+  bool get isMadeForKids =>
+      root.outerHtml.toLowerCase().contains('made for kids');
+
   ///
   int get videoLikeCount =>
       initialData.likesCount ??
@@ -110,8 +114,8 @@ class WatchPage extends YoutubePage<WatchPageInitialData> {
   }
 
   String? _getInitialAttestationDataSource() {
-    final match =
-        RegExp(r'window\.ytAtN\(\s*({[\s\S]*?})\s*\)').firstMatch(root.outerHtml);
+    final match = RegExp(r'window\.ytAtN\(\s*({[\s\S]*?})\s*\)')
+        .firstMatch(root.outerHtml);
     return match?.group(1);
   }
 

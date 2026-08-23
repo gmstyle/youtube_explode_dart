@@ -38,7 +38,8 @@ Future<void> main(List<String> args) async {
 
     final SabrStreamInfo stream;
     if (manifest.sabr.whereType<SabrAudioStreamInfo>().isNotEmpty) {
-      stream = manifest.sabr.whereType<SabrAudioStreamInfo>().withHighestBitrate();
+      stream =
+          manifest.sabr.whereType<SabrAudioStreamInfo>().withHighestBitrate();
     } else if (manifest.sabr.isNotEmpty) {
       stream = manifest.sabr.first;
     } else {
@@ -46,7 +47,8 @@ Future<void> main(List<String> args) async {
       exit(1);
     }
 
-    stdout.writeln('Downloading SABR itag ${stream.tag} (${stream.container.name})…');
+    stdout.writeln(
+        'Downloading SABR itag ${stream.tag} (${stream.container.name})…');
     final outFile = File('/tmp/sabr_lib_${videoId}_${stream.tag}.webm');
     final sink = outFile.openWrite();
     var bytes = 0;
@@ -75,8 +77,13 @@ class _PoProvider extends BasePoTokenProvider {
   final String _scriptPath;
 
   @override
-  Future<String> generatePoToken(String videoId, PoTokenContext context) async {
-    final proc = await Process.start(_denoExe, ['run', '--allow-net', _scriptPath]);
+  Future<String> generatePoToken(
+    String videoId,
+    PoTokenContext context, {
+    PoTokenKind kind = PoTokenKind.gvs,
+  }) async {
+    final proc =
+        await Process.start(_denoExe, ['run', '--allow-net', _scriptPath]);
     proc.stdin.writeln(jsonEncode({
       'videoId': videoId,
       'context': context.innertubeContext,
