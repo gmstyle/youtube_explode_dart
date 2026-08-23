@@ -3,6 +3,8 @@ import '../channels/channel_id.dart';
 import '../common/common.dart';
 import '../extensions/helpers_extension.dart';
 import '../reverse_engineering/challenges/js_challenge.dart';
+import '../reverse_engineering/po_token/po_token_provider.dart';
+import '../reverse_engineering/sabr/sabr_downloader.dart';
 import '../reverse_engineering/clients/related_videos_client.dart';
 import '../reverse_engineering/pages/watch_page.dart';
 import '../reverse_engineering/youtube_http_client.dart';
@@ -32,8 +34,14 @@ class VideoClient {
   CommentsClient get comments => commentsClient;
 
   /// Initializes an instance of [VideoClient].
-  VideoClient(this._httpClient, {BaseJSChallengeSolver? jsSolver})
-      : streamsClient = StreamClient(_httpClient, jsSolver: jsSolver),
+  VideoClient(this._httpClient,
+      {BaseJSChallengeSolver? jsSolver,
+      BasePoTokenProvider? poTokenProvider,
+      BaseSabrDownloader? sabrDownloader})
+      : streamsClient = StreamClient(_httpClient,
+            jsSolver: jsSolver,
+            poTokenProvider: poTokenProvider,
+            sabrDownloader: sabrDownloader),
         closedCaptions = ClosedCaptionClient(_httpClient),
         commentsClient = CommentsClient(_httpClient);
 

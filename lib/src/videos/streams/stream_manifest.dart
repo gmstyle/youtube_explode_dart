@@ -1,6 +1,7 @@
 import 'dart:collection';
 
 import 'mixins/hls_stream_info.dart';
+import 'mixins/sabr_stream_info.dart';
 import 'streams.dart';
 
 /// Manifest that contains information about available media streams
@@ -46,6 +47,11 @@ class StreamManifest {
   /// Note that the content is not directly downloadable but returns a file with a list of the video fragments urls (this library can handle and download them).
   late final UnmodifiableListView<HlsStreamInfo> hls =
       UnmodifiableListView(streams.whereType<HlsStreamInfo>());
+
+  /// Gets SABR streams (Server Adaptive Bitrate).
+  /// These require a [BaseSabrDownloader] to download (e.g. [DenoSabrDownloader]).
+  late final UnmodifiableListView<SabrStreamInfo> sabr =
+      UnmodifiableListView(streams.whereType<SabrStreamInfo>());
 
   @override
   String toString() => streams.describe();

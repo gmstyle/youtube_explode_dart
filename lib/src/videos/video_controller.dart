@@ -15,7 +15,7 @@ class VideoController {
 
   Future<PlayerResponse> getPlayerResponse(
       VideoId videoId, YoutubeApiClient client,
-      {WatchPage? watchPage}) async {
+      {WatchPage? watchPage, String? poToken}) async {
     final payload = client.payload;
     assert(payload['context'] != null, 'client must contain a context');
     assert(payload['context']!['client'] != null,
@@ -38,6 +38,12 @@ class VideoController {
     if (body['context']!['client']['clientName'] == 'IOS') {
       body['context']!['client']!['visitorData'] =
           await _extractVisitorData(httpClient, client);
+    }
+
+    // Inject the content-bound PO Token into the /player request body under
+    // serviceIntegrityDimensions so YouTube returns valid stream URLs.
+    if (poToken != null) {
+      body['serviceIntegrityDimensions'] = {'poToken': poToken};
     }
 
     final content = await httpClient.postString(

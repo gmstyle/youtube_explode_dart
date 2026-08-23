@@ -96,10 +96,23 @@ class WatchPage extends YoutubePage<WatchPageInitialData> {
 
   late final Map<String, dynamic> ytCfg = _getYtCfg();
 
+  /// Raw JavaScript object passed to `window.ytAtN(...)` on the watch page.
+  ///
+  /// This is used by clients that need the initial BotGuard attestation data
+  /// for PO token minting.
+  late final String? initialAttestationDataSource =
+      _getInitialAttestationDataSource();
+
   Map<String, dynamic> _getYtCfg() {
     return json.decode(RegExp(r'ytcfg\.set\s*\(\s*({.+?})\s*\)\s*;')
         .firstMatch(root.outerHtml)!
         .group(1)!);
+  }
+
+  String? _getInitialAttestationDataSource() {
+    final match =
+        RegExp(r'window\.ytAtN\(\s*({[\s\S]*?})\s*\)').firstMatch(root.outerHtml);
+    return match?.group(1);
   }
 
   ///
