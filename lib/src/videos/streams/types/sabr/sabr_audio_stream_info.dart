@@ -10,8 +10,7 @@ import '../../models/audio_track.dart';
 import '../../streams.dart';
 
 /// YouTube media stream delivered via SABR (audio-only).
-class SabrAudioStreamInfo
-    with StreamInfo, AudioStreamInfo, SabrStreamInfo {
+class SabrAudioStreamInfo with StreamInfo, AudioStreamInfo, SabrStreamInfo {
   @override
   final VideoId videoId;
 

@@ -47,10 +47,19 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-enum _Status { idle, initProvider, fetchInfo, fetchManifest, downloading, done, error }
+enum _Status {
+  idle,
+  initProvider,
+  fetchInfo,
+  fetchManifest,
+  downloading,
+  done,
+  error
+}
 
 class _HomePageState extends State<HomePage> {
-  final _urlController = TextEditingController(text: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+  final _urlController = TextEditingController(
+      text: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
 
   _Status _status = _Status.idle;
   String _statusMessage = '';
@@ -68,9 +77,6 @@ class _HomePageState extends State<HomePage> {
   String? _lastPoToken;
   String? _lastError;
 
-  BasePoTokenProvider? _poTokenProvider;
-  BaseJSChallengeSolver? _jsSolver;
-  BaseSabrDownloader? _sabrDownloader;
   YoutubeExplode? _yt;
   bool get _supportsWebViewPoToken => Platform.isAndroid || Platform.isIOS;
   bool get _usesDenoPoToken => !Platform.isAndroid && !Platform.isIOS;
@@ -97,7 +103,8 @@ class _HomePageState extends State<HomePage> {
   Future<void> _validateDownloadedFile(File file, StreamInfo stream) async {
     final fileSize = await file.length();
     if (fileSize < 1024) {
-      throw StateError('File troppo piccolo ($fileSize bytes), download non valido.');
+      throw StateError(
+          'File troppo piccolo ($fileSize bytes), download non valido.');
     }
 
     // Basic MP4 sanity check: "ftyp" box should be present near the start.
@@ -161,9 +168,6 @@ class _HomePageState extends State<HomePage> {
   @override
   void dispose() {
     _yt?.close();
-    _jsSolver?.dispose();
-    _poTokenProvider?.dispose();
-    _sabrDownloader?.dispose();
     _urlController.dispose();
     super.dispose();
   }
@@ -182,42 +186,31 @@ class _HomePageState extends State<HomePage> {
     });
 
     try {
-      // (Re)create provider and client each run so the WebView is fresh
       _yt?.close();
-      _jsSolver?.dispose();
-      _poTokenProvider?.dispose();
-      _sabrDownloader?.dispose();
-      _jsSolver = null;
-      _poTokenProvider = null;
-      _sabrDownloader = null;
+      _yt = null;
 
-      BasePoTokenProvider? provider;
-      BaseJSChallengeSolver? jsSolver;
-      BaseSabrDownloader? sabrDownloader;
       if (_poTokenEnabled) {
         if (_supportsWebViewPoToken) {
-          provider = await WebViewPoTokenProvider.create();
-          jsSolver = await WebViewEJSSolver.create();
-        } else if (_usesDenoPoToken) {
-          final denoExe = await DenoPoTokenProvider.resolveDenoExe();
-          provider = await DenoPoTokenProvider.create(denoExe: denoExe);
-          jsSolver = await DenoEJSSolver.init(denoExe: denoExe);
-          final sabrScript = await prepareSabrScriptFromAsset();
-          sabrDownloader = await DenoSabrDownloader.init(
-            denoExe: denoExe,
-            scriptPath: sabrScript,
+          final provider = await WebViewPoTokenProvider.create();
+          final jsSolver = await WebViewEJSSolver.create();
+          _yt = YoutubeExplode(
+            poTokenProvider: provider,
+            jsSolver: jsSolver,
           );
+        } else if (_usesDenoPoToken) {
+          final poScript = await preparePoScriptFromAsset();
+          final sabrScript = await prepareSabrScriptFromAsset();
+          _yt = await YoutubeExplodeFactory.openDesktop(
+            poTokenScriptPath: poScript,
+            sabrScriptPath: sabrScript,
+          );
+        } else {
+          _yt = YoutubeExplode();
         }
-        _poTokenProvider = provider;
-        _jsSolver = jsSolver;
-        _sabrDownloader = sabrDownloader;
+      } else {
+        // Tier 1 only: visionos / androidVr direct HTTPS (no Deno/WebView).
+        _yt = YoutubeExplode();
       }
-
-      _yt = YoutubeExplode(
-        poTokenProvider: provider,
-        jsSolver: jsSolver,
-        sabrDownloader: sabrDownloader,
-      );
 
       // Resolve video ID
       final videoId = VideoId.fromString(_urlController.text.trim());
@@ -243,17 +236,8 @@ class _HomePageState extends State<HomePage> {
 
       final manifest = await _yt!.videos.streamsClient.getManifest(videoId);
 
-      // Prefer direct HTTPS streams (audio/muxed); SABR only when those are absent.
-      final StreamInfo stream;
-      if (manifest.audioOnly.isNotEmpty) {
-        stream = manifest.audioOnly.withHighestBitrate();
-      } else if (manifest.muxed.isNotEmpty) {
-        stream = manifest.muxed.withHighestBitrate();
-      } else if (manifest.sabr.whereType<SabrAudioStreamInfo>().isNotEmpty) {
-        stream = manifest.sabr
-            .whereType<SabrAudioStreamInfo>()
-            .withHighestBitrate();
-      } else {
+      final stream = manifest.bestDownloadableAudio;
+      if (stream == null) {
         throw StateError(
           'No downloadable streams available (audioOnly, muxed and SABR are empty).',
         );
@@ -358,12 +342,16 @@ class _HomePageState extends State<HomePage> {
               child: SwitchListTile(
                 title: const Text('Abilita PO Token (BotGuard)'),
                 subtitle: Text(
-                  _supportsWebViewPoToken
-                      ? 'WebView su mobile (Android/iOS).\nRichiesto per client WEB dal 2025.'
-                      : 'Deno su Linux/Desktop (come FreeTube headless).\nRichiede `deno` installato.',
+                  _poTokenEnabled
+                      ? (_supportsWebViewPoToken
+                          ? 'WebView + cascade visionos → WEB/PO → SABR.'
+                          : 'Deno (openDesktop) + cascade visionos → WEB/PO → SABR.\nRichiede `deno` installato.')
+                      : 'Solo tier 1: client visionos/androidVr (HTTPS diretto, senza Deno).',
                 ),
                 value: _poTokenEnabled,
-                onChanged: isRunning ? null : (v) => setState(() => _poTokenEnabled = v),
+                onChanged: isRunning
+                    ? null
+                    : (v) => setState(() => _poTokenEnabled = v),
               ),
             ),
             const SizedBox(height: 12),
@@ -461,7 +449,8 @@ class _HomePageState extends State<HomePage> {
                 child: ListTile(
                   leading: const Icon(Icons.save_alt, color: Colors.green),
                   title: const Text('File salvato in:'),
-                  subtitle: Text(_savedPath!, style: const TextStyle(fontSize: 11)),
+                  subtitle:
+                      Text(_savedPath!, style: const TextStyle(fontSize: 11)),
                 ),
               ),
               const SizedBox(height: 8),

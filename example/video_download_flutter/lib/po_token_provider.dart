@@ -113,7 +113,10 @@ class WebViewPoTokenProvider extends BasePoTokenProvider {
 
   @override
   Future<String> generatePoToken(
-      String videoId, PoTokenContext context) async {
+    String videoId,
+    PoTokenContext context, {
+    PoTokenKind kind = PoTokenKind.gvs,
+  }) async {
     if (!_ready) await _readyCompleter.future;
     if (context.initialAttestationDataSource == null) {
       throw Exception(
@@ -174,7 +177,8 @@ class WebViewEJSSolver extends BaseEJSSolver {
   }
 
   Future<void> _init() async {
-    _controller = WebViewController()..setJavaScriptMode(JavaScriptMode.unrestricted);
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted);
     await _controller.loadHtmlString('<html><body></body></html>');
     await _loadModules();
 
@@ -193,8 +197,8 @@ class WebViewEJSSolver extends BaseEJSSolver {
       await _loadModules();
       return;
     }
-    final exists =
-        await _controller.runJavaScriptReturningResult('typeof jsc === "function"');
+    final exists = await _controller
+        .runJavaScriptReturningResult('typeof jsc === "function"');
     final normalized = _normalizeJsResult(exists);
     if (normalized != 'true') {
       await _loadModules();
@@ -262,112 +266,20 @@ class WebViewEJSSolver extends BaseEJSSolver {
   }
 }
 
-/// Desktop PO token provider using Deno (FreeTube-style headless JS runtime).
-///
-/// Requires [deno] to be installed and available on PATH (or in ~/.deno/bin).
-class DenoPoTokenProvider extends BasePoTokenProvider {
-  DenoPoTokenProvider._(this._denoExe, this._scriptPath, this._tmpDir);
-
-  final String _denoExe;
-  final String _scriptPath;
-  final Directory _tmpDir;
-
-  static Future<String> _resolveDenoExe() async {
-    final home = Platform.environment['HOME'];
-    if (home != null) {
-      final homeDeno = File('$home/.deno/bin/deno');
-      if (homeDeno.existsSync()) return homeDeno.path;
-    }
-
-    final denoInstall = Platform.environment['DENO_INSTALL'];
-    if (denoInstall != null) {
-      final installed = File('$denoInstall/bin/deno');
-      if (installed.existsSync()) return installed.path;
-    }
-
-    final check = await Process.run('deno', ['--version']);
-    if (check.exitCode == 0) return 'deno';
-
-    throw Exception(
-      'Deno non trovato. Installalo per generare PO token su Linux/desktop '
-      '(https://deno.land).',
-    );
-  }
-
-  static Future<String> resolveDenoExe() => _resolveDenoExe();
-
-  static Future<DenoPoTokenProvider> create({String? denoExe}) async {
-    final resolvedDeno = denoExe ?? await _resolveDenoExe();
-
-    final script = await rootBundle.loadString('assets/po_token_deno.mjs');
-    final tmpDir = await Directory.systemTemp.createTemp('yt_po_token_');
-    final scriptFile = File('${tmpDir.path}/po_token_deno.mjs');
-    await scriptFile.writeAsString(script);
-    return DenoPoTokenProvider._(resolvedDeno, scriptFile.path, tmpDir);
-  }
-
-  @override
-  Future<String> generatePoToken(
-      String videoId, PoTokenContext context) async {
-    if (context.initialAttestationDataSource == null) {
-      throw Exception(
-          'initialAttestationData not found in watch page; cannot mint PO token');
-    }
-
-    final proc = await Process.start(_denoExe, [
-      'run',
-      '--allow-net',
-      _scriptPath,
-    ]);
-
-    proc.stdin.writeln(jsonEncode({
-      'videoId': videoId,
-      'context': context.innertubeContext,
-      'initialAttestationDataSource': context.initialAttestationDataSource,
-      'ytConfig': context.ytConfig,
-    }));
-    await proc.stdin.close();
-
-    final stdout = await proc.stdout.transform(utf8.decoder).join();
-    final stderr = await proc.stderr.transform(utf8.decoder).join();
-    final exitCode = await proc.exitCode;
-
-    Map<String, dynamic>? result;
-    for (final line in stdout.split('\n').reversed) {
-      final trimmed = line.trim();
-      if (trimmed.isEmpty) continue;
-      try {
-        result = jsonDecode(trimmed) as Map<String, dynamic>;
-        break;
-      } catch (_) {
-        continue;
-      }
-    }
-
-    if (result == null) {
-      throw Exception(
-        'Deno PO token script failed (exit $exitCode): ${stderr.isEmpty ? stdout : stderr}',
-      );
-    }
-
-    if (result['success'] == true) {
-      return result['token'] as String;
-    }
-    throw Exception('PO Token generation failed: ${result['error']}');
-  }
-
-  @override
-  void dispose() {
-    if (_tmpDir.existsSync()) {
-      _tmpDir.delete(recursive: true);
-    }
-  }
+/// Writes asset scripts to temp files for Flutter/desktop embedders where
+/// [Isolate.resolvePackageUri] is unavailable.
+Future<String> preparePoScriptFromAsset([
+  String assetPath = 'assets/po_token_deno.mjs',
+]) async {
+  final script = await rootBundle.loadString(assetPath);
+  final scriptFile = File(
+    '${(await Directory.systemTemp.createTemp('yt_po_token_')).path}/po_token_deno.mjs',
+  );
+  await scriptFile.writeAsString(script);
+  return scriptFile.path;
 }
 
 /// Writes the SABR Deno script from a Flutter asset to a temp file.
-///
-/// Required on Flutter/desktop embedders where [Isolate.resolvePackageUri]
-/// is unavailable.
 Future<String> prepareSabrScriptFromAsset([
   String assetPath = 'assets/deno_sabr_download.mjs',
 ]) async {

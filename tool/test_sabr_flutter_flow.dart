@@ -29,7 +29,8 @@ Future<void> main(List<String> args) async {
 
     stdout.writeln('2. getManifest()…');
     final manifest = await yt.videos.streamsClient.getManifest(videoId);
-    final stream = manifest.sabr.whereType<SabrAudioStreamInfo>().withHighestBitrate();
+    final stream =
+        manifest.sabr.whereType<SabrAudioStreamInfo>().withHighestBitrate();
     stdout.writeln('   SABR itag ${stream.tag}');
 
     stdout.writeln('3. download…');
@@ -54,8 +55,13 @@ class _PoProvider extends BasePoTokenProvider {
   final String _scriptPath;
 
   @override
-  Future<String> generatePoToken(String videoId, PoTokenContext context) async {
-    final proc = await Process.start(_denoExe, ['run', '--allow-net', _scriptPath]);
+  Future<String> generatePoToken(
+    String videoId,
+    PoTokenContext context, {
+    PoTokenKind kind = PoTokenKind.gvs,
+  }) async {
+    final proc =
+        await Process.start(_denoExe, ['run', '--allow-net', _scriptPath]);
     proc.stdin.writeln(jsonEncode({
       'videoId': videoId,
       'context': context.innertubeContext,

@@ -221,8 +221,9 @@ class _InitialData extends InitialData {
                 '',
             '',
             video
-                .getJson<String>('overlayMetadata/secondaryText/content')!
-                .parseIntWithUnits() ?? 0);
+                    .getJson<String>('overlayMetadata/secondaryText/content')!
+                    .parseIntWithUnits() ??
+                0);
       }
     }
 

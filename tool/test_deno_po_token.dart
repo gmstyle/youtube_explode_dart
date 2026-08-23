@@ -40,10 +40,12 @@ Future<void> main(List<String> args) async {
   try {
     stdout.writeln('Fetching manifest for $videoId…');
     final manifest = await yt.videos.streamsClient.getManifest(videoId);
-    stdout.writeln('Muxed: ${manifest.muxed.length}, audio: ${manifest.audioOnly.length}, video: ${manifest.videoOnly.length}');
+    stdout.writeln(
+        'Muxed: ${manifest.muxed.length}, audio: ${manifest.audioOnly.length}, video: ${manifest.videoOnly.length}');
 
     if (manifest.muxed.isEmpty && manifest.audioOnly.isEmpty) {
-      stderr.writeln('No streams in manifest — PO token or player response may have failed.');
+      stderr.writeln(
+          'No streams in manifest — PO token or player response may have failed.');
       exit(1);
     }
 
@@ -72,9 +74,14 @@ class _DenoTestProvider extends BasePoTokenProvider {
   final String _scriptPath;
 
   @override
-  Future<String> generatePoToken(String videoId, PoTokenContext context) async {
+  Future<String> generatePoToken(
+    String videoId,
+    PoTokenContext context, {
+    PoTokenKind kind = PoTokenKind.gvs,
+  }) async {
     stderr.writeln('Generating PO token via Deno for $videoId…');
-    final proc = await Process.start(_denoExe, ['run', '--allow-net', _scriptPath]);
+    final proc =
+        await Process.start(_denoExe, ['run', '--allow-net', _scriptPath]);
     proc.stdin.writeln(jsonEncode({
       'videoId': videoId,
       'context': context.innertubeContext,
@@ -98,10 +105,12 @@ class _DenoTestProvider extends BasePoTokenProvider {
     }
 
     if (result == null) {
-      throw Exception('Deno failed ($exitCode): ${stderrText.isEmpty ? stdoutText : stderrText}');
+      throw Exception(
+          'Deno failed ($exitCode): ${stderrText.isEmpty ? stdoutText : stderrText}');
     }
     if (result['success'] == true) {
-      stderr.writeln('PO token OK (${(result['token'] as String).length} chars)');
+      stderr
+          .writeln('PO token OK (${(result['token'] as String).length} chars)');
       return result['token'] as String;
     }
     throw Exception(result['error']);
