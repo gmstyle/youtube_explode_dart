@@ -13,6 +13,10 @@ class DenoEJSSolver extends BaseEJSSolver {
 
   DenoEJSSolver._(this._deno);
 
+  static String _stripAnsi(String value) {
+    return value.replaceAll(RegExp(r'\x1B\[[0-9;]*m'), '').trim();
+  }
+
   static Future<DenoEJSSolver> init({String? denoExe}) async {
     final modules = await EJSBuilder.getJSModules();
     final deno = await _DenoProcess.init(initCode: modules, denoExe: denoExe);
@@ -29,7 +33,8 @@ class DenoEJSSolver extends BaseEJSSolver {
 
     final result = await _deno.eval(wrappedCode);
 
-    if (result != "undefined") {
+    final normalized = _stripAnsi(result);
+    if (normalized != 'undefined' && normalized.isNotEmpty) {
       throw Exception('Expected undefined result from Deno eval, got: $result');
     }
 
@@ -99,9 +104,15 @@ class _DenoProcess {
 
     currentOutputSubscription = _stdoutController.stream.listen((data) {
       if (!lineReceived.isCompleted) {
-        // Assuming single line output per eval.
-        // This will capture the first full line or chunk received after sending the code.
-        request.completer.complete(data.trim());
+        // Deno repl may emit ANSI-colored "undefined" plus a trailing prompt.
+        final lines = data
+            .split('\n')
+            .map((line) => DenoEJSSolver._stripAnsi(line))
+            .where((line) => line.isNotEmpty && line != '>')
+            .toList();
+        if (lines.isEmpty) return;
+
+        request.completer.complete(lines.first);
         lineReceived.complete();
         currentOutputSubscription
             ?.cancel(); // Cancel subscription for this request

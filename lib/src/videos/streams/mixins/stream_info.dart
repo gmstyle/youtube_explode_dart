@@ -4,6 +4,7 @@ import '../../../reverse_engineering/models/fragment.dart';
 import '../../videos.dart';
 import '../models/audio_track.dart';
 import 'hls_stream_info.dart';
+import 'sabr_stream_info.dart';
 
 /// Generic YouTube media stream.
 mixin StreamInfo {
@@ -82,10 +83,12 @@ extension StreamInfoIterableExt<T extends StreamInfo> on Iterable<T> {
     // - Then sort by bitrate.
     final sorted = toList()
       ..sort((a, b) {
-        final aIsOnlyAudio =
-            (a is AudioOnlyStreamInfo) || (a is HlsAudioStreamInfo);
-        final bIsOnlyAudio =
-            (b is AudioOnlyStreamInfo) || (b is HlsAudioStreamInfo);
+        final aIsOnlyAudio = (a is AudioOnlyStreamInfo) ||
+            (a is HlsAudioStreamInfo) ||
+            (a is SabrAudioStreamInfo);
+        final bIsOnlyAudio = (b is AudioOnlyStreamInfo) ||
+            (b is HlsAudioStreamInfo) ||
+            (b is SabrAudioStreamInfo);
 
         if (aIsOnlyAudio && !bIsOnlyAudio) {
           return -1;
@@ -111,10 +114,13 @@ extension StreamInfoIterableExt<T extends StreamInfo> on Iterable<T> {
           '${e.qualityLabel}${e.framerate.framesPerSecond}'
         else
           e.qualityLabel,
-        '${e is HlsStreamInfo ? '~' : ''}${e.bitrate}',
-        '${e is HlsStreamInfo ? '~' : ''}${e.size}',
+        '${e is HlsStreamInfo || e is SabrStreamInfo ? '~' : ''}${e.bitrate}',
+        '${e is HlsStreamInfo || e is SabrStreamInfo ? '~' : ''}${e.size}',
         e.codec.parameters['codecs'],
-        if (e is VideoOnlyStreamInfo || e is HlsVideoStreamInfo) 'video only',
+        if (e is VideoOnlyStreamInfo ||
+            e is HlsVideoStreamInfo ||
+            e is SabrVideoStreamInfo)
+          'video only',
         // if (e is AudioOnlyStreamInfo) 'audio only',
         if (e is MuxedStreamInfo || e is HlsMuxedStreamInfo) 'muxed',
         if (e case AudioStreamInfo(:AudioTrack audioTrack))

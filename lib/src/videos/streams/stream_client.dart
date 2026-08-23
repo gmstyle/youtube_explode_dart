@@ -9,6 +9,10 @@ import '../../reverse_engineering/challenges/js_challenge.dart';
 import '../../reverse_engineering/heuristics.dart';
 import '../../reverse_engineering/models/stream_info_provider.dart';
 import '../../reverse_engineering/pages/watch_page.dart';
+import '../../reverse_engineering/player/player_response.dart';
+import '../../reverse_engineering/po_token/po_token_provider.dart';
+import '../../reverse_engineering/sabr/sabr_downloader.dart';
+import '../../reverse_engineering/sabr/sabr_stream_context.dart';
 import '../../reverse_engineering/youtube_http_client.dart';
 import '../video_id.dart';
 import '../youtube_api_client.dart';
@@ -21,11 +25,18 @@ class StreamClient {
   final YoutubeHttpClient _httpClient;
   final StreamController _controller;
   final BaseJSChallengeSolver? _jsChallengeSolver;
+  final BasePoTokenProvider? _poTokenProvider;
+  final BaseSabrDownloader? _sabrDownloader;
 
   /// Initializes an instance of [StreamClient]
-  StreamClient(this._httpClient, {BaseJSChallengeSolver? jsSolver})
+  StreamClient(this._httpClient,
+      {BaseJSChallengeSolver? jsSolver,
+      BasePoTokenProvider? poTokenProvider,
+      BaseSabrDownloader? sabrDownloader})
       : _controller = StreamController(_httpClient),
-        _jsChallengeSolver = jsSolver;
+        _jsChallengeSolver = jsSolver,
+        _poTokenProvider = poTokenProvider,
+        _sabrDownloader = sabrDownloader;
 
   /// Gets the manifest that contains information
   /// about available streams in the specified video.
@@ -69,9 +80,13 @@ class StreamClient {
 
     videoId = VideoId.fromString(videoId);
     final clients = ytClients ??
-        [YoutubeApiClient.visionos, YoutubeApiClient.androidVr];
+        (_poTokenProvider != null
+            ? [YoutubeApiClient.safari]
+            : [YoutubeApiClient.visionos, YoutubeApiClient.androidVr]);
 
-    if (_jsChallengeSolver != null && ytClients == null) {
+    if (_jsChallengeSolver != null &&
+        ytClients == null &&
+        _poTokenProvider == null) {
       clients.add(YoutubeApiClient.safari);
     }
 
@@ -135,6 +150,21 @@ class StreamClient {
                 'Video $videoId returned 403 (stream: ${adaptive.tag})',
               );
             }
+
+            // Muxed-only HEAD can hide CDN 403s on adaptive URLs (e.g. androidSdkless).
+            final adaptive = streams.cast<StreamInfo?>().firstWhere(
+                  (s) =>
+                      s is AudioOnlyStreamInfo || s is VideoOnlyStreamInfo,
+                  orElse: () => null,
+                );
+            if (adaptive != null) {
+              final adaptiveHead = await _httpClient.head(adaptive.url);
+              if (adaptiveHead.statusCode == 403) {
+                throw YoutubeExplodeException(
+                  'Video $videoId returned 403 (stream: ${adaptive.tag})',
+                );
+              }
+            }
           }
           uniqueStreams.addAll(streams);
           hlsManifestUrl ??= hlsUrlCandidate;
@@ -149,7 +179,8 @@ class StreamClient {
     }
 
     // If the user has not provided any client retry with the tv which work also in some restricted videos.
-    if (uniqueStreams.isEmpty && ytClients == null) {
+    // Skip this when using a PO token provider: tokens are bound to the WEB watch-page session.
+    if (uniqueStreams.isEmpty && ytClients == null && _poTokenProvider == null) {
       return getManifest(videoId, ytClients: [YoutubeApiClient.tv]);
     }
     if (uniqueStreams.isEmpty) {
@@ -195,8 +226,43 @@ class StreamClient {
   /// Gets the actual stream which is identified by the specified metadata.
   /// Usually this downloads the bytes of the stream.
   /// For HLS streams all the fragments are concatenated into a single stream.
-  Stream<List<int>> get(StreamInfo streamInfo) =>
-      _httpClient.getStream(streamInfo, streamClient: this);
+  /// For SABR streams bytes are fetched via [BaseSabrDownloader].
+  /// The SABR session is refreshed immediately before download so the PO token
+  /// and /player response stay bound to the same watch-page session.
+  Stream<List<int>> get(StreamInfo streamInfo) async* {
+    if (streamInfo is SabrStreamInfo) {
+      final downloader = _sabrDownloader;
+      if (downloader == null) {
+        throw YoutubeExplodeException(
+          'SABR stream itag ${streamInfo.tag} requires a SabrDownloader '
+          '(e.g. DenoSabrDownloader.init()).',
+        );
+      }
+
+      Object? lastError;
+      StackTrace? lastStack;
+      for (var attempt = 0; attempt < 2; attempt++) {
+        try {
+          final fresh = await _fetchFreshSabrStream(streamInfo);
+          if (attempt > 0) {
+            _logger.info(
+              'Retrying SABR download for itag ${streamInfo.tag} with fresh session',
+            );
+          }
+          await for (final chunk in downloader.download(fresh)) {
+            yield chunk;
+          }
+          return;
+        } on YoutubeExplodeException catch (e, s) {
+          lastError = e;
+          lastStack = s;
+          _logger.warning('SABR download attempt ${attempt + 1} failed: $e');
+        }
+      }
+      Error.throwWithStackTrace(lastError!, lastStack!);
+    }
+    yield* _httpClient.getStream(streamInfo, streamClient: this);
+  }
 
   Stream<StreamInfo> _getStreams(VideoId videoId,
       {required YoutubeApiClient ytClient,
@@ -216,8 +282,39 @@ class StreamClient {
     if (requireWatchPage) {
       watchPage = await WatchPage.get(_httpClient, videoId.value);
     }
-    final playerResponse = await _controller
-        .getPlayerResponse(videoId, ytClient, watchPage: watchPage);
+
+    // Generate a single content-bound PO Token for this video before the
+    // /player request, so the same token can be injected in the request body
+    // (serviceIntegrityDimensions) and appended to every stream URL (pot=).
+    String? poToken;
+    if (_poTokenProvider != null && watchPage != null) {
+      try {
+        final innertubeCtx = watchPage.ytCfg['INNERTUBE_CONTEXT']
+            as Map<String, dynamic>? ?? {};
+        final clientCtx =
+            innertubeCtx['client'] as Map<String, dynamic>? ?? {};
+        final context = PoTokenContext(
+          visitorData: clientCtx['visitorData'] as String? ?? '',
+          clientVersion: clientCtx['clientVersion'] as String? ?? '',
+          innertubeContext: innertubeCtx,
+          ytConfig: watchPage.ytCfg,
+          initialAttestationDataSource: watchPage.initialAttestationDataSource,
+        );
+        poToken =
+            await _poTokenProvider!.generatePoToken(videoId.value, context);
+        _logger.fine('Generated PO Token for video ${videoId.value}');
+      } catch (e) {
+        _logger.warning('Failed to generate PO Token: $e');
+      }
+    }
+
+    final playerClient = poToken != null && watchPage != null
+        ? _webClientFromWatchPage(watchPage)
+        : ytClient;
+
+    final playerResponse = await _controller.getPlayerResponse(
+        videoId, playerClient,
+        watchPage: watchPage, poToken: poToken);
 
     if (!playerResponse.previewVideoId.isNullOrWhiteSpace) {
       throw VideoRequiresPurchaseException.preview(
@@ -238,24 +335,36 @@ class StreamClient {
     }
     onHlsManifest?.call(playerResponse.hlsManifestUrl);
     yield* _parseStreamInfo(playerResponse.streams,
-        watchPage: watchPage, videoId: videoId);
+        watchPage: watchPage, videoId: videoId, poToken: poToken);
+
+    if (_sabrDownloader != null &&
+        poToken != null &&
+        watchPage != null &&
+        playerResponse.hasSabrStreaming) {
+      yield* _parseSabrStreams(
+        playerResponse: playerResponse,
+        watchPage: watchPage,
+        videoId: videoId,
+        poToken: poToken,
+      );
+    }
 
     if (!playerResponse.dashManifestUrl.isNullOrWhiteSpace) {
       final dashManifest =
           await _controller.getDashManifest(playerResponse.dashManifestUrl!);
       yield* _parseStreamInfo(dashManifest.streams,
-          watchPage: watchPage, videoId: videoId);
+          watchPage: watchPage, videoId: videoId, poToken: poToken);
     }
     if (!playerResponse.hlsManifestUrl.isNullOrWhiteSpace) {
       final hlsManifest =
           await _controller.getHlsManifest(playerResponse.hlsManifestUrl!);
       yield* _parseStreamInfo(hlsManifest.streams,
-          watchPage: watchPage, videoId: videoId);
+          watchPage: watchPage, videoId: videoId, poToken: poToken);
     }
   }
 
   Stream<StreamInfo> _parseStreamInfo(Iterable<StreamInfoProvider> streams,
-      {WatchPage? watchPage, VideoId? videoId}) async* {
+      {WatchPage? watchPage, VideoId? videoId, String? poToken}) async* {
     // First pass: collect all unique challenges
     final nChallenges = <String>{};
     final sigChallenges = <String>{};
@@ -361,11 +470,28 @@ class StreamClient {
         }
       }
 
-      final contentLength = stream.contentLength ??
-          (await _httpClient.getContentLength(url, validate: false)) ??
-          0;
+      // Append GVS PO Token to the stream URL so the CDN accepts the request.
+      if (poToken != null) {
+        url = url.setQueryParam('pot', poToken);
+      }
 
-      if (contentLength <= 0) {
+      var contentLength = stream.contentLength ??
+          (await _httpClient.getContentLength(url, validate: false));
+
+      // WEB + PO token often returns muxed URLs whose HEAD fails until n-sig is
+      // decoded, but GET with pot= may still work. Keep muxed streams in that case.
+      if ((contentLength == null || contentLength <= 0) && poToken != null) {
+        final isMuxed = stream.source != StreamSource.adaptive &&
+            !stream.audioCodec.isNullOrWhiteSpace &&
+            !stream.videoCodec.isNullOrWhiteSpace;
+        if (isMuxed) {
+          _logger.warning(
+              'Keeping muxed stream itag $itag without verified content length (PO token flow)');
+          contentLength = stream.contentLength ?? 1;
+        }
+      }
+
+      if (contentLength == null || contentLength <= 0) {
         continue;
       }
 
@@ -514,5 +640,238 @@ class StreamClient {
       (url.scheme == 'http' || url.scheme == 'https') && url.host.isNotEmpty;
 
   static bool _hasPlayableUrl(StreamInfo stream) =>
-      _isAbsoluteHttpUrl(stream.url);
+      stream is SabrStreamInfo || _isAbsoluteHttpUrl(stream.url);
+
+  Stream<StreamInfo> _parseSabrStreams({
+    required PlayerResponse playerResponse,
+    required WatchPage watchPage,
+    required VideoId videoId,
+    required String poToken,
+  }) async* {
+    final rawSabrUrl = playerResponse.serverAbrStreamingUrl!;
+    final sabrUrl = await _decipherUrlIfNeeded(rawSabrUrl, watchPage);
+    if (sabrUrl == null) {
+      _logger.warning('Could not parse serverAbrStreamingUrl');
+      return;
+    }
+
+    final playerJson = Map<String, dynamic>.from(playerResponse.root);
+    final streamingData = Map<String, dynamic>.from(
+      playerJson['streamingData'] as Map<String, dynamic>,
+    );
+    streamingData['serverAbrStreamingUrl'] = sabrUrl;
+    playerJson['streamingData'] = streamingData;
+    if (rawSabrUrl != sabrUrl) {
+      _logger.fine('Deciphered serverAbrStreamingUrl for SABR');
+    }
+
+    final clientCtx = watchPage.ytCfg['INNERTUBE_CONTEXT']?['client']
+            as Map<String, dynamic>? ??
+        {};
+    final clientName = innertubeClientNameId(
+      clientCtx['clientName'] as String? ?? 'WEB',
+    );
+    final clientVersion = clientCtx['clientVersion'] as String? ?? '';
+
+    final sabrContext = SabrStreamContext(
+      videoId: videoId,
+      poToken: poToken,
+      clientName: clientName,
+      clientVersion: clientVersion,
+      playerResponse: playerJson,
+    );
+
+    final sabrUri = Uri.parse(sabrUrl);
+    final durationSec = playerResponse.videoDuration.inSeconds;
+
+    for (final stream in playerResponse.adaptiveStreams) {
+      if (_isAbsoluteHttpUrl(Uri.tryParse(stream.url) ?? Uri())) {
+        continue;
+      }
+
+      final audioCodec = stream.audioCodec;
+      final videoCodec = stream.videoCodec;
+      final itag = stream.tag;
+      final container = StreamContainer.parse(stream.container ?? 'webm');
+      final bitrate = Bitrate(stream.bitrate ?? 0);
+
+      var contentLength = stream.contentLength;
+      if ((contentLength == null || contentLength <= 0) &&
+          stream.bitrate != null &&
+          durationSec > 0) {
+        contentLength = (stream.bitrate! * durationSec) ~/ 8;
+      }
+      contentLength ??= 1;
+      final fileSize = FileSize(contentLength);
+
+      if (!videoCodec.isNullOrWhiteSpace &&
+          audioCodec.isNullOrWhiteSpace) {
+        final framerate = Framerate(stream.framerate ?? 24);
+        final videoQuality = VideoQualityUtil.fromLabel(stream.qualityLabel ?? '');
+        final videoWidth = stream.videoWidth;
+        final videoHeight = stream.videoHeight;
+        final videoResolution = videoWidth != null && videoHeight != null
+            ? VideoResolution(videoWidth, videoHeight)
+            : videoQuality.toVideoResolution();
+
+        yield SabrVideoStreamInfo(
+          videoId: videoId,
+          tag: itag,
+          url: sabrUri,
+          container: container,
+          size: fileSize,
+          bitrate: bitrate,
+          videoCodec: videoCodec!,
+          qualityLabel: stream.qualityLabel ?? videoQuality.qualityString,
+          videoQuality: videoQuality,
+          videoResolution: videoResolution,
+          framerate: framerate,
+          fragments: const [],
+          codec: stream.codec,
+          sabrContext: sabrContext,
+        );
+        continue;
+      }
+
+      if (!audioCodec.isNullOrWhiteSpace &&
+          videoCodec.isNullOrWhiteSpace) {
+        yield SabrAudioStreamInfo(
+          videoId: videoId,
+          tag: itag,
+          url: sabrUri,
+          container: container,
+          size: fileSize,
+          bitrate: bitrate,
+          audioCodec: audioCodec!,
+          fragments: const [],
+          codec: stream.codec,
+          qualityLabel: stream.qualityLabel ?? '',
+          audioTrack: stream.audioTrack,
+          sabrContext: sabrContext,
+        );
+      }
+    }
+  }
+
+  Future<String?> _decipherUrlIfNeeded(
+    String url,
+    WatchPage watchPage,
+  ) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return null;
+
+    var resolved = uri;
+    final solver = _jsChallengeSolver;
+    if (solver != null &&
+        watchPage.sourceUrl != null &&
+        resolved.queryParameters.containsKey('n')) {
+      final n = resolved.queryParameters['n']!;
+      try {
+        final decoded =
+            await solver.solve(watchPage.sourceUrl!, JSChallengeType.n, n);
+        resolved = resolved.setQueryParam('n', decoded);
+      } catch (e) {
+        _logger.warning('Could not decipher serverAbrStreamingUrl n param: $e');
+      }
+    }
+    return resolved.toString();
+  }
+
+  /// Re-fetches watch page, PO token and /player to build a fresh [SabrStreamInfo].
+  Future<SabrStreamInfo> _fetchFreshSabrStream(SabrStreamInfo streamInfo) async {
+    if (_poTokenProvider == null) return streamInfo;
+
+    final videoId = streamInfo.videoId;
+    final watchPage = await WatchPage.get(_httpClient, videoId.value);
+
+    String? poToken;
+    try {
+      final innertubeCtx =
+          watchPage.ytCfg['INNERTUBE_CONTEXT'] as Map<String, dynamic>? ?? {};
+      final clientCtx =
+          innertubeCtx['client'] as Map<String, dynamic>? ?? {};
+      final context = PoTokenContext(
+        visitorData: clientCtx['visitorData'] as String? ?? '',
+        clientVersion: clientCtx['clientVersion'] as String? ?? '',
+        innertubeContext: innertubeCtx,
+        ytConfig: watchPage.ytCfg,
+        initialAttestationDataSource: watchPage.initialAttestationDataSource,
+      );
+      poToken =
+          await _poTokenProvider!.generatePoToken(videoId.value, context);
+      _logger.fine('Refreshed PO Token for SABR download ${videoId.value}');
+    } catch (e) {
+      _logger.warning('Failed to refresh PO Token for SABR: $e');
+      return streamInfo;
+    }
+
+    final playerResponse = await _controller.getPlayerResponse(
+      videoId,
+      _webClientFromWatchPage(watchPage),
+      watchPage: watchPage,
+      poToken: poToken,
+    );
+
+    if (!playerResponse.hasSabrStreaming) {
+      throw YoutubeExplodeException(
+        'Video "$videoId" no longer exposes SABR streaming data.',
+      );
+    }
+
+    await for (final stream in _parseSabrStreams(
+      playerResponse: playerResponse,
+      watchPage: watchPage,
+      videoId: videoId,
+      poToken: poToken,
+    )) {
+      if (stream.tag == streamInfo.tag &&
+          stream.runtimeType == streamInfo.runtimeType) {
+        return stream as SabrStreamInfo;
+      }
+    }
+
+    throw YoutubeExplodeException(
+      'SABR stream itag ${streamInfo.tag} is no longer available.',
+    );
+  }
+
+  /// Builds a WEB innertube client from the watch page session, mirroring
+  /// FreeTube's `buildSessionFromYtConfig`. PO tokens are bound to this client.
+  static YoutubeApiClient _webClientFromWatchPage(WatchPage watchPage) {
+    final ytCfg = watchPage.ytCfg;
+    final innertubeContext = Map<String, dynamic>.from(
+      ytCfg['INNERTUBE_CONTEXT'] as Map<String, dynamic>,
+    );
+    innertubeContext.remove('clickTracking');
+
+    final client = Map<String, dynamic>.from(
+      innertubeContext['client'] as Map<String, dynamic>,
+    );
+    client['timeZone'] ??= 'UTC';
+    client['utcOffsetMinutes'] ??= 0;
+    innertubeContext['client'] = client;
+    innertubeContext['user'] = {
+      'enableSafetyMode': false,
+      'lockedSafetyMode': false,
+    };
+
+    final apiKey = ytCfg['INNERTUBE_API_KEY'] as String?;
+    final apiUrl = apiKey != null
+        ? 'https://www.youtube.com/youtubei/v1/player?key=$apiKey&prettyPrint=false'
+        : 'https://www.youtube.com/youtubei/v1/player?prettyPrint=false';
+
+    final userAgent = client['userAgent'] as String?;
+
+    return YoutubeApiClient(
+      {
+        'context': innertubeContext,
+        'contentCheckOk': true,
+        'racyCheckOk': true,
+      },
+      apiUrl,
+      headers: {
+        if (userAgent != null) 'User-Agent': userAgent,
+      },
+    );
+  }
 }
