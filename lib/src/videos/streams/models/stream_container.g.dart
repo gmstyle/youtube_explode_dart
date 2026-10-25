@@ -9,11 +9,7 @@ part of 'stream_container.dart';
 // **************************************************************************
 
 _StreamContainer _$StreamContainerFromJson(Map<String, dynamic> json) =>
-    _StreamContainer(
-      json['name'] as String,
-    );
+    _StreamContainer(json['name'] as String);
 
 Map<String, dynamic> _$StreamContainerToJson(_StreamContainer instance) =>
-    <String, dynamic>{
-      'name': instance.name,
-    };
+    <String, dynamic>{'name': instance.name};

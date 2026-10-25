@@ -1,8 +1,17 @@
 # Read about `build.yaml` at https://pub.dev/packages/build_config
-# To update generated code, run `pub run build_runner build`
+# To update generated code, run `dart run build_runner build`
 targets:
   $default:
+    sources:
+      exclude:
+        - example/**
     builders:
+      freezed:
+        options:
+          # Dart 3.13 rejects named params that start with `_` and are not
+          # field formals; freezed map/when used `_` / `_internal` from ctor names.
+          map: false
+          when: false
       # The end-user of a builder which applies "source_gen|combining_builder"
       # may configure the builder to ignore specific lints for their project
       source_gen|combining_builder:

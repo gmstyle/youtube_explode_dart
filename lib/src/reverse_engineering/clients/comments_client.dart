@@ -12,8 +12,9 @@ class CommentsClient {
 
   late final List<JsonMap>? _commentRenderers = _getCommentRenderers();
 
-  late final List<_Comment>? comments =
-      _commentRenderers?.map((e) => _Comment(e)).toList(growable: false);
+  late final List<_Comment>? comments = _commentRenderers
+      ?.map((e) => _Comment(e))
+      .toList(growable: false);
 
   late final String? _continuationToken = _getContinuationToken();
 
@@ -24,7 +25,8 @@ class CommentsClient {
     YoutubeHttpClient httpClient,
     Video video,
   ) async {
-    final watchPage = video.watchPage ??
+    final watchPage =
+        video.watchPage ??
         await retry<WatchPage>(
           httpClient,
           () async => WatchPage.get(httpClient, video.id.value),
@@ -51,8 +53,9 @@ class CommentsClient {
   /*
 onResponseReceivedEndpoints[1].reloadContinuationItemsCommand.continuationItems[2].commentThreadRenderer.comment.commentRenderer.contentText.runs[0].text   */
   List<JsonMap>? _getCommentRenderers() {
-    final endpoints =
-        root.getJson<List<dynamic>>('onResponseReceivedEndpoints');
+    final endpoints = root.getJson<List<dynamic>>(
+      'onResponseReceivedEndpoints',
+    );
     final endpoint = endpoints?.last as JsonMap?;
     if (endpoint == null) {
       return null;
@@ -71,40 +74,46 @@ onResponseReceivedEndpoints[1].reloadContinuationItemsCommand.continuationItems[
     }
 
     // This can probably be simplified.
-    final cmd = endpoint.getJson<JsonMap>('reloadContinuationItemsCommand') ??
+    final cmd =
+        endpoint.getJson<JsonMap>('reloadContinuationItemsCommand') ??
         endpoint.getJson<JsonMap>('appendContinuationItemsAction');
-    final items = cmd?.getJson<List<dynamic>>('continuationItems') ??
+    final items =
+        cmd?.getJson<List<dynamic>>('continuationItems') ??
         cmd?.getJson<List<dynamic>>('appendContinuationItemsAction');
     return items
             ?.where((e) => e['commentThreadRenderer'] != null)
-            .map((e) =>
-                (e as JsonMap).getJson<JsonMap>('commentThreadRenderer')!)
+            .map(
+              (e) => (e as JsonMap).getJson<JsonMap>('commentThreadRenderer')!,
+            )
             .toList(growable: false) ??
         const [];
   }
 
   String? _getContinuationToken() {
-    final endpoints =
-        root.getJson<List<dynamic>>('onResponseReceivedEndpoints')!;
+    final endpoints = root.getJson<List<dynamic>>(
+      'onResponseReceivedEndpoints',
+    )!;
     final last = endpoints.last as JsonMap;
     final items = last.getJson<List<dynamic>>(
       'appendContinuationItemsAction/continuationItems',
     );
-    final item =
-        items?.firstWhereOrNull((e) => e['continuationItemRenderer'] != null)
-            as JsonMap?;
+    final item = items?.firstWhereOrNull(
+      (e) => e['continuationItemRenderer'] != null,
+    ) as JsonMap?;
     final token = item?.getJson<String>(
       'continuationItemRenderer/button/buttonRenderer/command/continuationCommand/token',
     ); /* Used for the replies */
     if (token != null) return token;
 
-    final cmd = last.getJson<JsonMap>('reloadContinuationItemsCommand') ??
+    final cmd =
+        last.getJson<JsonMap>('reloadContinuationItemsCommand') ??
         last.getJson<JsonMap>('appendContinuationItemsAction');
     final continuationItems =
         cmd?.getJson<List<dynamic>>('continuationItems') ??
-            cmd?.getJson<List<dynamic>>('appendContinuationItemsAction');
+        cmd?.getJson<List<dynamic>>('appendContinuationItemsAction');
     final continuationItem = continuationItems?.firstWhereOrNull(
-        (e) => e['continuationItemRenderer'] != null) as JsonMap?;
+      (e) => e['continuationItemRenderer'] != null,
+    ) as JsonMap?;
     return continuationItem?.getJson<String>(
       'continuationItemRenderer/continuationEndpoint/continuationCommand/token',
     );
@@ -112,9 +121,9 @@ onResponseReceivedEndpoints[1].reloadContinuationItemsCommand.continuationItems[
 
   // onResponseReceivedEndpoints[0].reloadContinuationItemsCommand.continuationItems[0].commentsHeaderRenderer
   int getCommentsCount() {
-    final firstEndpoint = root
-        .getJson<List<dynamic>>('onResponseReceivedEndpoints')!
-        .first as JsonMap;
+    final firstEndpoint =
+        root.getJson<List<dynamic>>('onResponseReceivedEndpoints')!.first
+            as JsonMap;
     return firstEndpoint
             .getJson<String>(
               'reloadContinuationItemsCommand/continuationItems/0/commentsHeaderRenderer/commentsCount/runs/0/text',
@@ -128,7 +137,7 @@ onResponseReceivedEndpoints[1].reloadContinuationItemsCommand.continuationItems[
       return null;
     }
 
-    final data = await httpClient.sendContinuation('next', _continuationToken!);
+    final data = await httpClient.sendContinuation('next', _continuationToken);
     return CommentsClient(data);
   }
 }
@@ -138,10 +147,11 @@ class _Comment {
 
   late final JsonMap _commentRenderer =
       root.getJson<JsonMap>('commentRenderer') ??
-          root.getJson<JsonMap>('comment/commentRenderer')!;
+      root.getJson<JsonMap>('comment/commentRenderer')!;
 
-  late final JsonMap? _commentRepliesRenderer =
-      root.getJson<JsonMap>('replies/commentRepliesRenderer');
+  late final JsonMap? _commentRepliesRenderer = root.getJson<JsonMap>(
+    'replies/commentRepliesRenderer',
+  );
 
   /// Used to get replies
   late final String? continuation = _commentRepliesRenderer?.getJson<String>(
@@ -150,30 +160,36 @@ class _Comment {
 
   late final int? repliesCount = _commentRenderer.getT<int>('replyCount');
 
-  late final String author =
-      _commentRenderer.getJson<String>('authorText/simpleText')!;
+  late final String author = _commentRenderer.getJson<String>(
+    'authorText/simpleText',
+  )!;
 
-  late final String channelThumbnail = (_commentRenderer
-          .getJson<List<dynamic>>('authorThumbnail/thumbnails')!
-          .last as JsonMap)
-      .getT<String>('url')!;
+  late final String channelThumbnail =
+      (_commentRenderer
+                  .getJson<List<dynamic>>('authorThumbnail/thumbnails')!
+                  .last
+              as JsonMap)
+          .getT<String>('url')!;
 
-  late final String channelId = _commentRenderer
-      .getJson<String>('authorEndpoint/browseEndpoint/browseId')!;
+  late final String channelId = _commentRenderer.getJson<String>(
+    'authorEndpoint/browseEndpoint/browseId',
+  )!;
 
   late final String text = _commentRenderer
       .getJson<List<dynamic>>('contentText/runs')!
       .cast<Map<dynamic, dynamic>>()
       .parseRuns();
 
-  late final String publishTime =
-      _commentRenderer.getJson<String>('publishedTimeText/runs/0/text')!;
+  late final String publishTime = _commentRenderer.getJson<String>(
+    'publishedTimeText/runs/0/text',
+  )!;
 
   late final int? likeCount = _commentRenderer
       .getJson<String>('voteCount/simpleText')
       .parseIntWithUnits();
 
-  late final bool isHearted = _commentRenderer.getJson<JsonMap>(
+  late final bool isHearted =
+      _commentRenderer.getJson<JsonMap>(
         'actionButtons/commentActionButtonsRenderer/creatorHeart',
       ) !=
       null;
@@ -190,11 +206,12 @@ extension _CommentsDataExtension on WatchPageInitialData {
       final contents = root.getJson<List<dynamic>>(
         'contents/twoColumnWatchNextResults/results/results/contents',
       );
-      final section =
-          contents?.lastWhereOrNull((e) => e['itemSectionRenderer'] != null)
-              as JsonMap?;
-      final sectionContents =
-          section?.getJson<List<dynamic>>('itemSectionRenderer/contents');
+      final section = contents?.lastWhereOrNull(
+        (e) => e['itemSectionRenderer'] != null,
+      ) as JsonMap?;
+      final sectionContents = section?.getJson<List<dynamic>>(
+        'itemSectionRenderer/contents',
+      );
       final first = sectionContents?.firstOrNull as JsonMap?;
       return first?.getJson<JsonMap>(
         'continuationItemRenderer/continuationEndpoint/continuationCommand',

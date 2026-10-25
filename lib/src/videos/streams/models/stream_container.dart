@@ -4,7 +4,7 @@ part 'stream_container.freezed.dart';
 part 'stream_container.g.dart';
 
 /// Stream container.
-@freezed
+@Freezed(copyWith: false)
 abstract class StreamContainer with _$StreamContainer {
   /// Initializes an instance of [StreamContainer]
   const factory StreamContainer._internal(
@@ -38,7 +38,10 @@ abstract class StreamContainer with _$StreamContainer {
       '3gpp' => StreamContainer.tgpp,
       'm3u8' => StreamContainer.m3u8,
       _ => throw ArgumentError.value(
-          name, 'name', 'Valid values: mp4, webm, 3gpp'),
+        name,
+        'name',
+        'Valid values: mp4, webm, 3gpp',
+      ),
     };
   }
 

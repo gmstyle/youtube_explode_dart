@@ -15,7 +15,4 @@ VideoResolution _$VideoResolutionFromJson(Map<String, dynamic> json) =>
     );
 
 Map<String, dynamic> _$VideoResolutionToJson(VideoResolution instance) =>
-    <String, dynamic>{
-      'width': instance.width,
-      'height': instance.height,
-    };
+    <String, dynamic>{'width': instance.width, 'height': instance.height};

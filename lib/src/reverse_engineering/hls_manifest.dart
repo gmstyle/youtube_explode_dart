@@ -89,17 +89,20 @@ class HlsManifest {
       int? audioClen;
       int? videoClen;
       if (sgoap != null) {
-        audioClen =
-            int.parse(RegExp(r'clen=(\d+)').firstMatch(sgoap)!.group(1)!);
+        audioClen = int.parse(
+          RegExp(r'clen=(\d+)').firstMatch(sgoap)!.group(1)!,
+        );
         if (bandwidth == null) {
           final dur = double.parse(
-              RegExp(r'dur=(\d+\.\d+)').firstMatch(sgoap)!.group(1)!);
+            RegExp(r'dur=(\d+\.\d+)').firstMatch(sgoap)!.group(1)!,
+          );
           bandwidth = (audioClen / dur).round() * 8;
         }
       }
       if (sgovp != null) {
-        videoClen =
-            int.parse(RegExp(r'clen=(\d+)').firstMatch(sgovp)!.group(1)!);
+        videoClen = int.parse(
+          RegExp(r'clen=(\d+)').firstMatch(sgovp)!.group(1)!,
+        );
       }
 
       streams.add(
@@ -142,7 +145,8 @@ class HlsManifest {
         continue;
       }
       final duration = double.parse(
-          lines[i].substring('#EXTINF:'.length, lines[i].length - 1));
+        lines[i].substring('#EXTINF:'.length, lines[i].length - 1),
+      );
       final url = lines[i + 1];
       segments.add((url: url, duration: duration));
       i++;
@@ -212,11 +216,8 @@ class _StreamInfo extends StreamInfoProvider {
     this.videoOnly,
     this.audioItag,
   ) : codec = MediaType('application', 'vnd.apple.mpegurl', {
-          'codecs': [
-            if (audioCodec != null) audioCodec,
-            if (videoCodec != null) videoCodec,
-          ].join(',')
-        });
+        'codecs': [?audioCodec, ?videoCodec].join(','),
+      });
 
   @override
   StreamSource get source => StreamSource.hls;

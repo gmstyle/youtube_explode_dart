@@ -28,17 +28,17 @@ AudioOnlyStreamInfo _$AudioOnlyStreamInfoFromJson(Map<String, dynamic> json) =>
     );
 
 Map<String, dynamic> _$AudioOnlyStreamInfoToJson(
-        AudioOnlyStreamInfo instance) =>
-    <String, dynamic>{
-      'videoId': instance.videoId,
-      'tag': instance.tag,
-      'url': instance.url.toString(),
-      'container': instance.container,
-      'size': instance.size,
-      'bitrate': instance.bitrate,
-      'audioCodec': instance.audioCodec,
-      'codec': mediaTypeToJson(instance.codec),
-      'fragments': instance.fragments,
-      'qualityLabel': instance.qualityLabel,
-      'audioTrack': instance.audioTrack,
-    };
+  AudioOnlyStreamInfo instance,
+) => <String, dynamic>{
+  'videoId': instance.videoId,
+  'tag': instance.tag,
+  'url': instance.url.toString(),
+  'container': instance.container,
+  'size': instance.size,
+  'bitrate': instance.bitrate,
+  'audioCodec': instance.audioCodec,
+  'codec': mediaTypeToJson(instance.codec),
+  'fragments': instance.fragments,
+  'qualityLabel': instance.qualityLabel,
+  'audioTrack': instance.audioTrack,
+};

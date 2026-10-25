@@ -9,12 +9,8 @@ part of 'closed_caption_format.dart';
 // **************************************************************************
 
 ClosedCaptionFormat _$ClosedCaptionFormatFromJson(Map<String, dynamic> json) =>
-    ClosedCaptionFormat(
-      json['formatCode'] as String,
-    );
+    ClosedCaptionFormat(json['formatCode'] as String);
 
 Map<String, dynamic> _$ClosedCaptionFormatToJson(
-        ClosedCaptionFormat instance) =>
-    <String, dynamic>{
-      'formatCode': instance.formatCode,
-    };
+  ClosedCaptionFormat instance,
+) => <String, dynamic>{'formatCode': instance.formatCode};

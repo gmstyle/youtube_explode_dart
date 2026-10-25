@@ -8,14 +8,10 @@ part 'username.freezed.dart';
 @freezed
 abstract class Username with _$Username {
   /// Initializes an instance of [Username].
-  factory Username(String urlOrUsername) {
-    final username = parseUsername(urlOrUsername);
+  factory Username(String value) {
+    final username = parseUsername(value);
     if (username == null) {
-      throw ArgumentError.value(
-        urlOrUsername,
-        'urlOrUsername',
-        'Invalid username',
-      );
+      throw ArgumentError.value(value, 'value', 'Invalid username');
     }
     return Username._(username);
   }

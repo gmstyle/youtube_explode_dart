@@ -9,14 +9,10 @@ part 'channel_handle.freezed.dart';
 @freezed
 abstract class ChannelHandle with _$ChannelHandle {
   /// Initializes an instance of [ChannelHandle].
-  factory ChannelHandle(String urlOrChannelHandle) {
-    final channelHandle = parseChannelHandle(urlOrChannelHandle);
+  factory ChannelHandle(String value) {
+    final channelHandle = parseChannelHandle(value);
     if (channelHandle == null) {
-      throw ArgumentError.value(
-        urlOrChannelHandle,
-        'urlOrChannelHandle',
-        'Invalid ChannelHandle',
-      );
+      throw ArgumentError.value(value, 'value', 'Invalid ChannelHandle');
     }
     return ChannelHandle._(channelHandle);
   }

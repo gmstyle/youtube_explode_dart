@@ -1,3 +1,10 @@
+## 3.2.0
+- Require Dart SDK `>=3.13.0`.
+- Upgrade `xml` to `^7.0.0` (capped below 7.1 by flutter_svg / vector_graphics_compiler).
+- Upgrade codegen stack: freezed 4, json_serializable 6.15, build_runner 2.17, lints 6.
+- Disable freezed `map`/`when` generation (Dart 3.13 rejects `_`-prefixed named parameters).
+- `StreamContainer.copyWith` is no longer generated (freezed 4 + private ctor incompatibility).
+
 ## 3.1.1
 - Default `getManifest` client to `androidVr` so adaptive (audio/video-only) URLs are not rejected with CDN 403.
 - Skip streams with empty or non-absolute URLs before HEAD probes (avoids `No host specified in URI`).

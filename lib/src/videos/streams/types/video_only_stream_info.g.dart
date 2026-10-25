@@ -28,22 +28,22 @@ VideoOnlyStreamInfo _$VideoOnlyStreamInfoFromJson(Map<String, dynamic> json) =>
     );
 
 Map<String, dynamic> _$VideoOnlyStreamInfoToJson(
-        VideoOnlyStreamInfo instance) =>
-    <String, dynamic>{
-      'videoId': instance.videoId,
-      'tag': instance.tag,
-      'url': instance.url.toString(),
-      'container': instance.container,
-      'size': instance.size,
-      'bitrate': instance.bitrate,
-      'videoCodec': instance.videoCodec,
-      'qualityLabel': instance.qualityLabel,
-      'videoQuality': _$VideoQualityEnumMap[instance.videoQuality]!,
-      'videoResolution': instance.videoResolution,
-      'framerate': instance.framerate,
-      'fragments': instance.fragments,
-      'codec': mediaTypeToJson(instance.codec),
-    };
+  VideoOnlyStreamInfo instance,
+) => <String, dynamic>{
+  'videoId': instance.videoId,
+  'tag': instance.tag,
+  'url': instance.url.toString(),
+  'container': instance.container,
+  'size': instance.size,
+  'bitrate': instance.bitrate,
+  'videoCodec': instance.videoCodec,
+  'qualityLabel': instance.qualityLabel,
+  'videoQuality': _$VideoQualityEnumMap[instance.videoQuality]!,
+  'videoResolution': instance.videoResolution,
+  'framerate': instance.framerate,
+  'fragments': instance.fragments,
+  'codec': mediaTypeToJson(instance.codec),
+};
 
 const _$VideoQualityEnumMap = {
   VideoQuality.unknown: 'unknown',

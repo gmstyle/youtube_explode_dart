@@ -8,10 +8,9 @@ part of 'bitrate.dart';
 // JsonSerializableGenerator
 // **************************************************************************
 
-_Bitrate _$BitrateFromJson(Map<String, dynamic> json) => _Bitrate(
-      (json['bitsPerSecond'] as num).toInt(),
-    );
+_Bitrate _$BitrateFromJson(Map<String, dynamic> json) =>
+    _Bitrate((json['bitsPerSecond'] as num).toInt());
 
 Map<String, dynamic> _$BitrateToJson(_Bitrate instance) => <String, dynamic>{
-      'bitsPerSecond': instance.bitsPerSecond,
-    };
+  'bitsPerSecond': instance.bitsPerSecond,
+};

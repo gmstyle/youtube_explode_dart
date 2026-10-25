@@ -11,18 +11,19 @@ abstract class VideoId with _$VideoId {
   static final _regMatchExp = RegExp(r'youtube\..+?/watch.*?v=(.*?)(?:&|/|$)');
   static final _shortMatchExp = RegExp(r'youtu\.be/(.*?)(?:\?|&|/|$)');
   static final _embedMatchExp = RegExp(r'youtube\..+?/embed/(.*?)(?:\?|&|/|$)');
-  static final _shortsMatchExp =
-      RegExp(r'youtube\..+/shorts/([A-Za-z0-9-_]+$)');
+  static final _shortsMatchExp = RegExp(
+    r'youtube\..+/shorts/([A-Za-z0-9-_]+$)',
+  );
   static final _liveMatchExp = RegExp(r'youtube\..+?/live/(.*?)(?:\?|&|/|$)');
 
   /// Initializes an instance of [VideoId] with a url or video id.
-  factory VideoId(String idOrUrl) {
-    final id = parseVideoId(idOrUrl);
+  factory VideoId(String value) {
+    final id = parseVideoId(value);
 
     if (id == null) {
       throw ArgumentError.value(
-        idOrUrl,
-        'idOrUrl',
+        value,
+        'value',
         'Invalid YouTube video ID or URL',
       );
     }
