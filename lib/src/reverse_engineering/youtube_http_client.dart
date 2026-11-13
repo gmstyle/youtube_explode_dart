@@ -219,8 +219,22 @@ class YoutubeHttpClient extends http.BaseClient {
         });
         if (validate) {
           try {
+            if (response.statusCode >= 400) {
+              _logger.warning(
+                  'Stream GET failed with status ${response.statusCode} for tag ${streamInfo.tag}: $url');
+            }
             _validateResponse(response, response.statusCode);
           } on FatalFailureException {
+            // PO-token WEB URLs are session/challenge bound. Re-fetching manifest
+            // in a loop usually reproduces the same failing URL and causes endless
+            // retries without progress.
+            if (url.queryParameters.containsKey('pot')) {
+              throw YoutubeExplodeException(
+                'Could not download stream ${streamInfo.tag}: '
+                'HTTP ${response.statusCode} on PO-token URL. '
+                'This usually means n-sig/challenge decoding is still required.',
+              );
+            }
             final newManifest =
                 await streamClient.getManifest(streamInfo.videoId);
             final stream = newManifest.streams

@@ -47,6 +47,41 @@ class StreamManifest {
   late final UnmodifiableListView<HlsStreamInfo> hls =
       UnmodifiableListView(streams.whereType<HlsStreamInfo>());
 
+  /// Gets SABR streams (Server Adaptive Bitrate).
+  /// These require a [BaseSabrDownloader] to download (e.g. [DenoSabrDownloader]).
+  late final UnmodifiableListView<SabrStreamInfo> sabr =
+      UnmodifiableListView(streams.whereType<SabrStreamInfo>());
+
+  /// Best **direct HTTPS** audio stream (excludes SABR).
+  ///
+  /// Prefer this over [bestDownloadableAudio] when avoiding SABR tier-3 delivery
+  /// (yt-dlp strategy: use visionos/direct URLs before adaptive SABR).
+  AudioStreamInfo? get bestDirectDownloadableAudio {
+    final directAudio = audio.where((s) => s is! SabrStreamInfo).toList();
+    if (directAudio.isNotEmpty) {
+      return directAudio.withHighestBitrate();
+    }
+    final directMuxed = muxed.toList();
+    if (directMuxed.isNotEmpty) {
+      return directMuxed.withHighestBitrate();
+    }
+    return null;
+  }
+
+  /// Best audio stream that can be downloaded with the current configuration.
+  ///
+  /// Prefers direct HTTPS [audioOnly], then [muxed], then [SabrAudioStreamInfo].
+  /// For tier-1-only downloads use [bestDirectDownloadableAudio].
+  AudioStreamInfo? get bestDownloadableAudio {
+    final direct = bestDirectDownloadableAudio;
+    if (direct != null) return direct;
+    final sabrAudio = sabr.whereType<SabrAudioStreamInfo>();
+    if (sabrAudio.isNotEmpty) {
+      return sabrAudio.withHighestBitrate();
+    }
+    return null;
+  }
+
   @override
   String toString() => streams.describe();
 }

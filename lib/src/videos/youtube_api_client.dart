@@ -95,18 +95,20 @@ class YoutubeApiClient {
     },
   }, 'https://music.youtube.com/youtubei/v1/player?key=AIzaSyAOghZGza2MQSZkY_zfZ370N-PUdXEo8AI&prettyPrint=false');
 
-  /// Default client for stream manifests. Provides muxed and adaptive streams
-  /// without requiring a JS challenge solver. Prefer this over [android] /
-  /// [androidSdkless], whose adaptive URLs are frequently rejected with 403.
+  /// Default client for stream manifests. Pinned to 1.65.10 (yt-dlp #16168) to
+  /// avoid SABR-only responses from newer VR client versions.
   static const androidVr = YoutubeApiClient({
     'context': {
       'client': {
         'clientName': 'ANDROID_VR',
-        'clientVersion': '1.56.21',
+        'clientVersion': '1.65.10',
+        'deviceMake': 'Oculus',
         'deviceModel': 'Quest 3',
-        'osVersion': '12',
+        'osVersion': '12L',
         'osName': 'Android',
         'androidSdkVersion': '32',
+        'userAgent':
+            'com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip',
         'hl': 'en',
         'timeZone': 'UTC',
         'utcOffsetMinutes': 0,
@@ -129,6 +131,57 @@ class YoutubeApiClient {
       },
     },
   }, 'https://www.youtube.com/youtubei/v1/player?prettyPrint=false');
+
+  /// Downgraded TV client — reliable DASH fallback for made-for-kids and when
+  /// [visionos] / [androidVr] fail (yt-dlp `tv_downgraded`).
+  static const tvDowngraded = YoutubeApiClient(
+    {
+      'context': {
+        'client': {
+          'clientName': 'TVHTML5',
+          'clientVersion': '5.20260707',
+          'userAgent': 'Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version',
+          'hl': 'en',
+          'timeZone': 'UTC',
+          'gl': 'US',
+          'utcOffsetMinutes': 0,
+        },
+        'user': {'lockedSafetyMode': false},
+        'request': {'useSsl': true},
+      },
+      'contentCheckOk': true,
+      'racyCheckOk': true,
+    },
+    'https://www.youtube.com/youtubei/v1/player?prettyPrint=false',
+    headers: {
+      'Sec-Fetch-Mode': 'navigate',
+      'Content-Type': 'application/json',
+      'Origin': 'https://www.youtube.com',
+    },
+  );
+
+  /// Embedded WEB player — workaround for age-gated and some restricted videos.
+  static const webEmbedded = YoutubeApiClient(
+    {
+      'context': {
+        'client': {
+          'clientName': 'WEB_EMBEDDED_PLAYER',
+          'clientVersion': '2.20250312.04.00',
+          'hl': 'en',
+          'timeZone': 'UTC',
+          'utcOffsetMinutes': 0,
+        },
+      },
+      'thirdParty': {'embedUrl': 'https://www.youtube.com/'},
+      'contentCheckOk': true,
+      'racyCheckOk': true,
+    },
+    'https://www.youtube.com/youtubei/v1/player?prettyPrint=false',
+    headers: {
+      'Content-Type': 'application/json',
+      'Origin': 'https://www.youtube.com',
+    },
+  );
 
   /// Used to bypass same restriction on videos.
   static const tv = YoutubeApiClient(

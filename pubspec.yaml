@@ -9,7 +9,7 @@ topics:
   - streams
 
 environment:
-  sdk: '>=3.14.0 <4.0.0'
+  sdk: '>=3.13.0 <4.0.0'
 
 dependencies:
   collection: ^1.18.0
@@ -39,3 +39,6 @@ false_secrets:
   - "lib/src/reverse_engineering/youtube_http_client.dart"
   - "lib/src/videos/video_controller.dart"
   - "lib/src/videos/youtube_api_client.dart"
+  - "lib/src/reverse_engineering/po_token/po_token_deno.mjs"
+  - "example/video_download_flutter/assets/po_token_deno.mjs"
+  - "example/video_download_flutter/assets/po_token.html"
