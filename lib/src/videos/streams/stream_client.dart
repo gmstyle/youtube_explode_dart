@@ -32,12 +32,10 @@ class StreamClient {
   /// Initializes an instance of [StreamClient]
   StreamClient(this._httpClient,
       {BaseJSChallengeSolver? jsSolver,
-      BasePoTokenProvider? poTokenProvider,
-      BaseSabrDownloader? sabrDownloader})
+      this._poTokenProvider,
+      this._sabrDownloader})
       : _controller = StreamController(_httpClient),
-        _jsChallengeSolver = jsSolver,
-        _poTokenProvider = poTokenProvider,
-        _sabrDownloader = sabrDownloader;
+        _jsChallengeSolver = jsSolver;
 
   /// Gets the manifest that contains information
   /// about available streams in the specified video.
@@ -394,12 +392,12 @@ class StreamClient {
           ytConfig: watchPage.ytCfg,
           initialAttestationDataSource: watchPage.initialAttestationDataSource,
         );
-        playerPoToken = await _poTokenProvider!.generatePoToken(
+        playerPoToken = await _poTokenProvider.generatePoToken(
           videoId.value,
           context,
           kind: PoTokenKind.player,
         );
-        gvsPoToken = await _poTokenProvider!.generatePoToken(
+        gvsPoToken = await _poTokenProvider.generatePoToken(
           videoId.value,
           context,
           kind: PoTokenKind.gvs,
@@ -975,12 +973,12 @@ class StreamClient {
         ytConfig: watchPage.ytCfg,
         initialAttestationDataSource: watchPage.initialAttestationDataSource,
       );
-      playerPoToken = await _poTokenProvider!.generatePoToken(
+      playerPoToken = await _poTokenProvider.generatePoToken(
         videoId.value,
         context,
         kind: PoTokenKind.player,
       );
-      gvsPoToken = await _poTokenProvider!.generatePoToken(
+      gvsPoToken = await _poTokenProvider.generatePoToken(
         videoId.value,
         context,
         kind: PoTokenKind.gvs,
@@ -1056,7 +1054,7 @@ class StreamClient {
       },
       apiUrl,
       headers: {
-        if (userAgent != null) 'User-Agent': userAgent,
+        'User-Agent'?: userAgent,
       },
     );
   }

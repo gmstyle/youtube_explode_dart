@@ -1,7 +1,7 @@
 import 'dart:io';
 
-import 'package:flutter/material.dart';
 import 'package:logging/logging.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
@@ -73,7 +73,6 @@ class _HomePageState extends State<HomePage> {
 
   // PO token state
   bool _poTokenEnabled = true;
-  String? _lastPoToken;
   String? _lastError;
 
   YoutubeExplode? _yt;
@@ -180,7 +179,6 @@ class _HomePageState extends State<HomePage> {
       _videoDuration = null;
       _videoAuthor = null;
       _savedPath = null;
-      _lastPoToken = null;
       _lastError = null;
     });
 
