@@ -29,6 +29,8 @@ class VideoController {
     final ytCfg = watchPage?.ytCfg;
 
     final body = {
+      'contentCheckOk': true,
+      'racyCheckOk': true,
       ...payload,
       'videoId': videoId.value,
       if (ytCfg?.containsKey('STS') ?? false)
@@ -46,6 +48,12 @@ class VideoController {
       );
     }
 
+    final visitorData =
+        (ytCfg?['VISITOR_DATA'] as String?) ??
+        ((ytCfg?['INNERTUBE_CONTEXT'] as Map?)?['client']
+                as Map?)?['visitorData']
+            as String?;
+
     final content = await httpClient.postString(
       client.apiUrl,
       body: body,
@@ -54,11 +62,9 @@ class VideoController {
         'X-Youtube-Client-Name': payload['context']!['client']!['clientName'],
         'X-Youtube-Client-Version':
             payload['context']!['client']!['clientVersion'],
-        if (ytCfg != null)
-          'X-Goog-Visitor-Id':
-              ytCfg['INNERTUBE_CONTEXT']['client']['visitorData'],
+        if (visitorData != null && visitorData.isNotEmpty)
+          'X-Goog-Visitor-Id': visitorData,
         'Origin': 'https://www.youtube.com',
-        'Sec-Fetch-Mode': 'navigate',
         'Content-Type': 'application/json',
         if (watchPage != null) 'Cookie': watchPage.cookieString,
         ...client.headers,

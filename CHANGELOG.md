@@ -1,3 +1,8 @@
+## Unreleased
+- Add native Quest 3 `userAgent` to `YoutubeApiClient.androidVr` and `contentCheckOk` / `racyCheckOk` flags to `visionos`, `androidVr`, `ios`, `androidMusic`, and `VideoController.getPlayerResponse`.
+- Stop `StreamClient.getManifest` at the first client returning valid streams instead of querying all remaining clients redundantly.
+- Auto-fetch `WatchPage` (including multi-block `ytcfg.set` extraction for `STS`) and decipher `signatureCipher` via `CipherManifest` when `jsSolver` is omitted (e.g., `YoutubeApiClient.tv`).
+
 ## 3.2.0
 - Require Dart SDK `>=3.14.0`.
 - Upgrade `xml` to `^7.0.0` (capped below 7.1 by flutter_svg / vector_graphics_compiler).

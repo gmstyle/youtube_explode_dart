@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:collection/collection.dart';
 import 'package:html/dom.dart';
 import 'package:html/parser.dart' as parser;
@@ -16,10 +14,12 @@ import 'player_config_base.dart';
 class WatchPage extends YoutubePage<WatchPageInitialData> {
   final VideoId videoId;
 
-  static final RegExp _videoLikeExp =
-      RegExp(r'"label"\s*:\s*"([\d,\.]+) likes"');
-  static final RegExp _videoDislikeExp =
-      RegExp(r'"label"\s*:\s*"([\d,\.]+) dislikes"');
+  static final RegExp _videoLikeExp = RegExp(
+    r'"label"\s*:\s*"([\d,\.]+) likes"',
+  );
+  static final RegExp _videoDislikeExp = RegExp(
+    r'"label"\s*:\s*"([\d,\.]+) dislikes"',
+  );
 
   @override
   // Overridden to be non-nullable.
@@ -38,9 +38,11 @@ class WatchPage extends YoutubePage<WatchPageInitialData> {
         .querySelectorAll('script')
         .map((e) => e.attributes['src'])
         .nonNulls
-        .firstWhereOrNull((e) =>
-            (e.contains('player_ias') || e.contains('player_es6')) &&
-            e.endsWith('.js'));
+        .firstWhereOrNull(
+          (e) =>
+              (e.contains('player_ias') || e.contains('player_es6')) &&
+              e.endsWith('.js'),
+        );
     if (url == null) {
       return null;
     }
@@ -97,9 +99,26 @@ class WatchPage extends YoutubePage<WatchPageInitialData> {
   late final Map<String, dynamic> ytCfg = _getYtCfg();
 
   Map<String, dynamic> _getYtCfg() {
-    return json.decode(RegExp(r'ytcfg\.set\s*\(\s*({.+?})\s*\)\s*;')
-        .firstMatch(root.outerHtml)!
-        .group(1)!);
+    final merged = <String, dynamic>{};
+    final html = root.outerHtml;
+    const marker = 'ytcfg.set(';
+    var pos = 0;
+    while (true) {
+      final idx = html.indexOf(marker, pos);
+      if (idx == -1) break;
+      var start = idx + marker.length;
+      while (start < html.length && html[start] == ' ') {
+        start++;
+      }
+      if (start < html.length && html[start] == '{') {
+        final block = html.substring(start).extractJson();
+        if (block != null) {
+          merged.addAll(block);
+        }
+      }
+      pos = idx + marker.length;
+    }
+    return merged;
   }
 
   ///
@@ -131,8 +150,8 @@ class WatchPage extends YoutubePage<WatchPageInitialData> {
 
   ///
   WatchPage.parse(String raw, this.videoId, this.cookies)
-      : root = parser.parse(raw),
-        super(parser.parse(raw), (root) => WatchPageInitialData(root));
+    : root = parser.parse(raw),
+      super(parser.parse(raw), (root) => WatchPageInitialData(root));
 
   ///
   static Future<WatchPage> get(YoutubeHttpClient httpClient, String videoId) {
@@ -141,8 +160,7 @@ class WatchPage extends YoutubePage<WatchPageInitialData> {
     );
     const defaultCookies = 'PREF=hl=en&tz=UTC; SOCS=CAI; GPS=1';
     const headers = {
-      'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.18 Safari/537.36',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.18 Safari/537.36',
       'Accept':
           'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       'Accept-Language': 'en-us,en;q=0.5',
@@ -155,11 +173,11 @@ class WatchPage extends YoutubePage<WatchPageInitialData> {
     return retry(httpClient, () async {
       final req = await httpClient.get(url, headers: headers, validate: true);
 
-      final cookieHeader = req.headers['set-cookie']!;
+      final cookieHeader = req.headers['set-cookie'] ?? '';
       final matches = cookiesExp.allMatches(cookieHeader);
       final cookies = Map.fromEntries(
-          matches.map((e) => MapEntry(e.group(1)!, e.group(2)!)))
-        ..addAll({'PREF': 'hl=en', 'SOCS': 'CAI', 'GPS': '1'});
+        matches.map((e) => MapEntry(e.group(1)!, e.group(2)!)),
+      )..addAll({'PREF': 'hl=en', 'SOCS': 'CAI', 'GPS': '1'});
 
       final result = WatchPage.parse(req.body, VideoId(videoId), cookies);
 
@@ -188,8 +206,9 @@ class WatchPlayerConfig implements PlayerConfigBase {
       'https://youtube.com${root.getJson<String>('assets/js')}';
 
   ///
-  late final PlayerResponse playerResponse =
-      PlayerResponse.parse(root.getJson<String>('args/playerResponse')!);
+  late final PlayerResponse playerResponse = PlayerResponse.parse(
+    root.getJson<String>('args/playerResponse')!,
+  );
 }
 
 class WatchPageInitialData extends InitialData {
@@ -204,7 +223,8 @@ class WatchPageInitialData extends InitialData {
         'contents/twoColumnWatchNextResults/results/results/contents',
       );
       final primaryInfo = contents?.firstWhereOrNull(
-          (e) => e['videoPrimaryInfoRenderer'] != null) as JsonMap?;
+        (e) => e['videoPrimaryInfoRenderer'] != null,
+      ) as JsonMap?;
       final topLevelButtons = primaryInfo?.getJson<List<dynamic>>(
         'videoPrimaryInfoRenderer/videoActions/menuRenderer/topLevelButtons',
       );
@@ -215,13 +235,13 @@ class WatchPageInitialData extends InitialData {
 
       final likes =
           (topLevelButtons.elementAtOrNull(0) as JsonMap?)?.getJson<String>(
-                'segmentedLikeDislikeButtonViewModel/likeButtonViewModel/likeButtonViewModel/toggleButtonViewModel/toggleButtonViewModel/defaultButtonViewModel/buttonViewModel/accessibilityText',
-              ) ??
-              (topLevelButtons.firstWhereOrNull(
-                      (e) => e['toggleButtonRenderer'] != null) as JsonMap?)
-                  ?.getJson<String>(
-                'toggleButtonRenderer/defaultText/accessibility/accessibilityData/label',
-              );
+            'segmentedLikeDislikeButtonViewModel/likeButtonViewModel/likeButtonViewModel/toggleButtonViewModel/toggleButtonViewModel/defaultButtonViewModel/buttonViewModel/accessibilityText',
+          ) ??
+          (topLevelButtons.firstWhereOrNull(
+            (e) => e['toggleButtonRenderer'] != null,
+          ) as JsonMap?)?.getJson<String>(
+            'toggleButtonRenderer/defaultText/accessibility/accessibilityData/label',
+          );
 
       return likes.parseInt();
     }
@@ -234,16 +254,19 @@ class WatchPageInitialData extends InitialData {
         'contents/twoColumnWatchNextResults/results/results/contents',
       );
       final primaryInfo = contents?.firstWhereOrNull(
-          (e) => e['videoPrimaryInfoRenderer'] != null) as JsonMap?;
+        (e) => e['videoPrimaryInfoRenderer'] != null,
+      ) as JsonMap?;
       final topLevelButtons = primaryInfo?.getJson<List<dynamic>>(
         'videoPrimaryInfoRenderer/videoActions/menuRenderer/topLevelButtons',
       );
-      final likes = (topLevelButtons
-              ?.where((e) => e['toggleButtonRenderer'] != null)
-              .elementAtSafe(1) as JsonMap?)
-          ?.getJson<String>(
-        'toggleButtonRenderer/defaultText/accessibility/accessibilityData/label',
-      );
+      final likes =
+          (topLevelButtons
+                      ?.where((e) => e['toggleButtonRenderer'] != null)
+                      .elementAtSafe(1)
+                  as JsonMap?)
+              ?.getJson<String>(
+                'toggleButtonRenderer/defaultText/accessibility/accessibilityData/label',
+              );
 
       return likes.parseInt();
     }
@@ -252,28 +275,32 @@ class WatchPageInitialData extends InitialData {
 
   List<MusicData>? getMusicData() {
     final panels = root.getJson<List<dynamic>>('engagementPanels');
-    final section = panels?.firstWhereOrNull((e) =>
-        e['engagementPanelSectionListRenderer'] != null &&
-        e['engagementPanelSectionListRenderer']['panelIdentifier'] ==
-            'engagement-panel-structured-description') as JsonMap?;
+    final section = panels?.firstWhereOrNull(
+      (e) =>
+          e['engagementPanelSectionListRenderer'] != null &&
+          e['engagementPanelSectionListRenderer']['panelIdentifier'] ==
+              'engagement-panel-structured-description',
+    ) as JsonMap?;
     final items = section?.getJson<List<dynamic>>(
       'engagementPanelSectionListRenderer/content/structuredDescriptionContentRenderer/items',
     );
-    final cardList =
-        items?.firstWhereOrNull((e) => e['horizontalCardListRenderer'] != null)
-            as JsonMap?;
+    final cardList = items?.firstWhereOrNull(
+      (e) => e['horizontalCardListRenderer'] != null,
+    ) as JsonMap?;
     final cards = cardList?.getJson<List<dynamic>>(
       'horizontalCardListRenderer/cards',
     );
     return cards
         ?.map((e) => (e as JsonMap).getJson<JsonMap>('videoAttributeViewModel'))
         .nonNulls
-        .map((e) => (
-              song: e.getT<String>('title'),
-              artist: e.getT<String>('subtitle'),
-              album: e.getJson<String>('secondarySubtitle/content'),
-              image: e.getJson<String>('image/sources/0/url')?.toUri()
-            ))
+        .map(
+          (e) => (
+            song: e.getT<String>('title'),
+            artist: e.getT<String>('subtitle'),
+            album: e.getJson<String>('secondarySubtitle/content'),
+            image: e.getJson<String>('image/sources/0/url')?.toUri(),
+          ),
+        )
         .toList();
   }
 }
