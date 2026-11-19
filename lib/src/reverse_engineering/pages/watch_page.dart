@@ -1,6 +1,9 @@
+import 'dart:convert';
+
 import 'package:collection/collection.dart';
 import 'package:html/dom.dart';
 import 'package:html/parser.dart' as parser;
+import 'package:http/http.dart' show HeadersWithSplitValues;
 
 import '../../../youtube_explode_dart.dart';
 import '../../extensions/helpers_extension.dart';
@@ -100,25 +103,85 @@ class WatchPage extends YoutubePage<WatchPageInitialData> {
 
   Map<String, dynamic> _getYtCfg() {
     final merged = <String, dynamic>{};
-    final html = root.outerHtml;
     const marker = 'ytcfg.set(';
-    var pos = 0;
-    while (true) {
-      final idx = html.indexOf(marker, pos);
-      if (idx == -1) break;
-      var start = idx + marker.length;
-      while (start < html.length && html[start] == ' ') {
-        start++;
-      }
-      if (start < html.length && html[start] == '{') {
-        final block = html.substring(start).extractJson();
-        if (block != null) {
-          merged.addAll(block);
+    final scriptSources = root
+        .querySelectorAll('script')
+        .map((e) => e.text)
+        .where((t) => t.contains(marker))
+        .toList(growable: false);
+    final sources = scriptSources.isNotEmpty ? scriptSources : [root.outerHtml];
+
+    for (final source in sources) {
+      var pos = 0;
+      while (true) {
+        final idx = source.indexOf(marker, pos);
+        if (idx == -1) break;
+        var start = idx + marker.length;
+        while (start < source.length) {
+          final ch = source.codeUnitAt(start);
+          if (ch != 0x20 && ch != 0x09 && ch != 0x0A && ch != 0x0D) {
+            break;
+          }
+          start++;
         }
+        if (start < source.length && source.codeUnitAt(start) == 0x7B) {
+          final block = _extractJsonObjectAt(source, start);
+          if (block != null) {
+            merged.addAll(block);
+          }
+        }
+        pos = idx + marker.length;
       }
-      pos = idx + marker.length;
     }
     return merged;
+  }
+
+  static Map<String, dynamic>? _extractJsonObjectAt(
+    String source,
+    int openBraceIndex,
+  ) {
+    if (openBraceIndex < 0 ||
+        openBraceIndex >= source.length ||
+        source.codeUnitAt(openBraceIndex) != 0x7B) {
+      return null;
+    }
+
+    var depth = 0;
+    var inString = false;
+    var escaped = false;
+
+    for (var i = openBraceIndex; i < source.length; i++) {
+      final ch = source.codeUnitAt(i);
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (ch == 0x5C) {
+          escaped = true;
+        } else if (ch == 0x22) {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (ch == 0x22) {
+        inString = true;
+      } else if (ch == 0x7B) {
+        depth++;
+      } else if (ch == 0x7D) {
+        depth--;
+        if (depth == 0) {
+          try {
+            final decoded = json.decode(
+              source.substring(openBraceIndex, i + 1),
+            );
+            return decoded is Map<String, dynamic> ? decoded : null;
+          } on FormatException {
+            return null;
+          }
+        }
+      }
+    }
+    return null;
   }
 
   ///
@@ -168,16 +231,22 @@ class WatchPage extends YoutubePage<WatchPageInitialData> {
       'Cookie': defaultCookies,
     };
 
-    final cookiesExp = RegExp(r'(?:^|,)(\w.+?)=(.*?);');
-
     return retry(httpClient, () async {
       final req = await httpClient.get(url, headers: headers, validate: true);
 
-      final cookieHeader = req.headers['set-cookie'] ?? '';
-      final matches = cookiesExp.allMatches(cookieHeader);
-      final cookies = Map.fromEntries(
-        matches.map((e) => MapEntry(e.group(1)!, e.group(2)!)),
-      )..addAll({'PREF': 'hl=en', 'SOCS': 'CAI', 'GPS': '1'});
+      final cookieList =
+          req.headersSplitValues['set-cookie'] ?? const <String>[];
+      final cookies = <String, String>{};
+      for (final raw in cookieList) {
+        final pair = raw.split(';').first;
+        final eq = pair.indexOf('=');
+        if (eq <= 0) continue;
+        final name = pair.substring(0, eq).trim();
+        final value = pair.substring(eq + 1).trim();
+        if (name.isEmpty || value.isEmpty) continue;
+        cookies[name] = value;
+      }
+      cookies.addAll({'PREF': 'hl=en', 'SOCS': 'CAI', 'GPS': '1'});
 
       final result = WatchPage.parse(req.body, VideoId(videoId), cookies);
 

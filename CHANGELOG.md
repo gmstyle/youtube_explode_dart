@@ -1,6 +1,8 @@
 ## Unreleased
-- Add native Quest 3 `userAgent` to `YoutubeApiClient.androidVr` and `contentCheckOk` / `racyCheckOk` flags to `visionos`, `androidVr`, `ios`, `androidMusic`, and `VideoController.getPlayerResponse`.
-- Stop `StreamClient.getManifest` at the first client returning valid streams instead of querying all remaining clients redundantly.
+- Bootstrap anonymous `visitorData` via `/youtubei/v1/visitor_id` (with `sw.js_data` fallback) for `VISIONOS`, `ANDROID_VR`, and `IOS`, update `YoutubeApiClient.androidVr` to `1.65.10` and `YoutubeApiClient.tv` to `7.20261118.10.00`, fix brace-balanced `WatchPage.ytCfg` parsing, and fall back to a `GET` `Range: bytes=0-0` probe when `HEAD` returns `403`.
+- Add native Quest 3 `userAgent` to `YoutubeApiClient.androidVr`, update `YoutubeApiClient.androidMusic` (`8.05.50`), add `YoutubeApiClient.userAgentForClientName`, and add `contentCheckOk` / `racyCheckOk` flags to `visionos`, `androidVr`, `ios`, `androidMusic`, and `VideoController.getPlayerResponse`.
+- Compare `YoutubeHttpClient` default headers case-insensitively so custom Title-Case `User-Agent` / `Cookie` headers are never overwritten by Chrome 96 defaults, forward client `User-Agent` to `HEAD` probes and `_getStream` CDN requests, and omit `Origin` on native clients.
+- Parse `Set-Cookie` headers in `WatchPage.get` via `headersSplitValues`, cap 403 `HEAD` probes and `VideoUnavailableException` retry costs, and stop `StreamClient.getManifest` at the first client returning valid streams.
 - Auto-fetch `WatchPage` (including multi-block `ytcfg.set` extraction for `STS`) and decipher `signatureCipher` via `CipherManifest` when `jsSolver` is omitted (e.g., `YoutubeApiClient.tv`).
 
 ## 3.2.0

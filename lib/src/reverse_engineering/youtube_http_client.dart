@@ -10,6 +10,7 @@ import '../extensions/helpers_extension.dart';
 import '../retry.dart';
 import '../videos/streams/mixins/hls_stream_info.dart';
 import '../videos/streams/streams.dart';
+import '../videos/youtube_api_client.dart';
 import 'hls_manifest.dart';
 
 /// HttpClient wrapper for YouTube
@@ -23,11 +24,9 @@ class YoutubeHttpClient extends http.BaseClient {
   bool get closed => _closed;
 
   static const Map<String, String> defaultHeaders = {
-    'user-agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.18 Safari/537.36',
+    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.18 Safari/537.36',
     'cookie': 'CONSENT=YES+cb',
-    'accept':
-        'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
+    'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
     'accept-language': 'en-US,en;q=0.5',
   };
 
@@ -36,7 +35,7 @@ class YoutubeHttpClient extends http.BaseClient {
 
   /// Initialize an instance of [YoutubeHttpClient]
   YoutubeHttpClient([http.Client? httpClient])
-      : _httpClient = httpClient ?? http.Client();
+    : _httpClient = httpClient ?? http.Client();
 
   /// Throws if something is wrong with the response.
   void _validateResponse(http.BaseResponse response, int statusCode) {
@@ -68,8 +67,10 @@ class YoutubeHttpClient extends http.BaseClient {
     Map<String, String> headers = const {},
     bool validate = true,
   }) async {
-    final response =
-        await get(url is String ? Uri.parse(url) : url, headers: headers);
+    final response = await get(
+      url is String ? Uri.parse(url) : url,
+      headers: headers,
+    );
     if (_closed) throw HttpClientClosedException();
 
     if (validate) {
@@ -107,8 +108,12 @@ class YoutubeHttpClient extends http.BaseClient {
     Encoding? encoding,
     bool validate = false,
   }) async {
-    final response =
-        await super.post(url, headers: headers, body: body, encoding: encoding);
+    final response = await super.post(
+      url,
+      headers: headers,
+      body: body,
+      encoding: encoding,
+    );
     if (_closed) throw HttpClientClosedException();
 
     if (validate) {
@@ -202,7 +207,8 @@ class YoutubeHttpClient extends http.BaseClient {
       try {
         final response = await retry(this, () async {
           final from = bytesCount;
-          final to = (streamInfo.isThrottled
+          final to =
+              (streamInfo.isThrottled
                   ? (bytesCount + 10379935)
                   : streamInfo.size.totalBytes) -
               1;
@@ -212,8 +218,22 @@ class YoutubeHttpClient extends http.BaseClient {
             request = http.Request('get', url);
             request.headers['Range'] = 'bytes=$from-$to';
           } else {
-            request =
-                http.Request('get', url.setQueryParam('range', '$from-$to'));
+            request = http.Request(
+              'get',
+              url.setQueryParam('range', '$from-$to'),
+            );
+          }
+          request.headers.addAll(headers);
+          final hasUa = request.headers.keys.any(
+            (k) => k.toLowerCase() == 'user-agent',
+          );
+          if (!hasUa) {
+            final clientUa = YoutubeApiClient.userAgentForClientName(
+              url.queryParameters['c'],
+            );
+            if (clientUa != null) {
+              request.headers['User-Agent'] = clientUa;
+            }
           }
           return send(request);
         });
@@ -221,13 +241,16 @@ class YoutubeHttpClient extends http.BaseClient {
           try {
             _validateResponse(response, response.statusCode);
           } on FatalFailureException {
-            final newManifest =
-                await streamClient.getManifest(streamInfo.videoId);
-            final stream = newManifest.streams
-                .firstWhereOrNull((e) => e.tag == streamInfo.tag);
+            final newManifest = await streamClient.getManifest(
+              streamInfo.videoId,
+            );
+            final stream = newManifest.streams.firstWhereOrNull(
+              (e) => e.tag == streamInfo.tag,
+            );
             if (stream == null) {
               _logger.severe(
-                  'Error: Could not find the stream in the new manifest (due to Youtube error)');
+                'Error: Could not find the stream in the new manifest (due to Youtube error)',
+              );
               rethrow;
             }
             url = stream.url;
@@ -286,12 +309,14 @@ class YoutubeHttpClient extends http.BaseClient {
     String action,
     String token, {
     Map<String, String>? headers,
-  }) async =>
-      sendPost(action, {'continuation': token}, headers: headers);
+  }) async => sendPost(action, {'continuation': token}, headers: headers);
 
   /// Sends a call to the youtube api endpoint.
-  Future<JsonMap> sendPost(String action, Map<String, dynamic> data,
-      {Map<String, String>? headers}) {
+  Future<JsonMap> sendPost(
+    String action,
+    Map<String, dynamic> data, {
+    Map<String, String>? headers,
+  }) {
     assert(action == 'next' || action == 'browse' || action == 'search');
 
     final url = Uri.parse(
@@ -347,10 +372,13 @@ class YoutubeHttpClient extends http.BaseClient {
   Future<http.StreamedResponse> send(http.BaseRequest request) async {
     if (_closed) throw HttpClientClosedException();
 
-    // Apply default headers if they are not already present
+    // Apply default headers if they are not already present (case-insensitive)
+    final existingLower = {
+      for (final k in request.headers.keys) k.toLowerCase(),
+    };
     headers.forEach((key, value) {
-      if (request.headers[key] == null) {
-        request.headers[key] = headers[key]!;
+      if (!existingLower.contains(key.toLowerCase())) {
+        request.headers[key] = value;
       }
     });
 

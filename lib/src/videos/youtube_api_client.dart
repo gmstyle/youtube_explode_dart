@@ -89,10 +89,11 @@ class YoutubeApiClient {
       'context': {
         'client': {
           'clientName': 'ANDROID_MUSIC',
-          'clientVersion': '2.16.032',
-          'androidSdkVersion': 31,
-          'userAgent':
-              'com.google.android.youtube/19.29.1  (Linux; U; Android 11) gzip',
+          'clientVersion': '8.05.50',
+          'androidSdkVersion': 33,
+          'osName': 'Android',
+          'osVersion': '13',
+          'userAgent': 'com.google.android.apps.youtube.music/8.05.50 (Linux; U; Android 13) gzip',
           'hl': 'en',
           'timeZone': 'UTC',
           'utcOffsetMinutes': 0,
@@ -111,12 +112,13 @@ class YoutubeApiClient {
     'context': {
       'client': {
         'clientName': 'ANDROID_VR',
-        'clientVersion': '1.56.21',
+        'clientVersion': '1.65.10',
+        'deviceMake': 'Oculus',
         'deviceModel': 'Quest 3',
         'osVersion': '12',
         'osName': 'Android',
-        'androidSdkVersion': '32',
-        'userAgent': 'com.google.android.apps.youtube.vr.oculus/1.56.21 (Linux; U; Android 12; en_US; Quest 3; Build/SQ3A.220605.009.A1; Cronet/132.0.6808.3)',
+        'androidSdkVersion': 32,
+        'userAgent': 'com.google.android.apps.youtube.vr.oculus/1.65.10 (Linux; U; Android 12; en_US; Quest 3; Build/SQ3A.220605.009.A1; Cronet/132.0.6808.3)',
         'hl': 'en',
         'timeZone': 'UTC',
         'utcOffsetMinutes': 0,
@@ -151,7 +153,7 @@ class YoutubeApiClient {
           "userAgent":
               "Mozilla/5.0 (ChromiumStylePlatform) Cobalt/Version,gzip(gfe)",
           'clientName': 'TVHTML5',
-          "clientVersion": "7.20251105.10.00",
+          "clientVersion": "7.20261118.10.00",
           'hl': 'en',
           'timeZone': 'UTC',
           'gl': 'US',
@@ -263,4 +265,26 @@ class YoutubeApiClient {
       'Origin': 'https://www.youtube.com',
     },
   );
+
+  /// Returns the User-Agent associated with [clientName] (`c=` parameter),
+  /// or `null` when unknown or unspecified.
+  static String? userAgentForClientName(String? clientName) {
+    if (clientName == null) return null;
+    final client = switch (clientName.trim().toUpperCase()) {
+      'VISIONOS' => visionos,
+      'ANDROID_VR' => androidVr,
+      'IOS' => ios,
+      'ANDROID' => android,
+      'ANDROID_MUSIC' => androidMusic,
+      'TVHTML5' => tv,
+      'WEB' => safari,
+      'MWEB' => mweb,
+      _ => null,
+    };
+    if (client == null) return null;
+    final context = client.payload['context'] as Map<String, dynamic>?;
+    final clientMap = context?['client'] as Map<String, dynamic>?;
+    final ua = clientMap?['userAgent'] as String?;
+    return (ua != null && ua.isNotEmpty) ? ua : null;
+  }
 }

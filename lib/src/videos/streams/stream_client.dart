@@ -106,6 +106,11 @@ class StreamClient {
       _logger.fine(
         'Getting stream manifest for video $videoId with client: ${client.payload['context']['client']['clientName']}',
       );
+      final clientUa =
+          (client.payload['context']?['client']?['userAgent']) as String?;
+      final probeHeaders = clientUa != null
+          ? <String, String>{'User-Agent': clientUa}
+          : const <String, String>{};
       try {
         await retry(_httpClient, () async {
           String? hlsUrlCandidate;
@@ -122,25 +127,15 @@ class StreamClient {
           }
 
           final probe = streams.first;
-          final response = await _httpClient.head(probe.url);
-          if (response.statusCode == 403) {
-            throw YoutubeExplodeException(
-              'Video $videoId returned 403 (stream: ${probe.tag})',
-            );
-          }
+          await _assertStreamReachable(videoId, probe, probeHeaders);
 
-          // Muxed-only HEAD can hide CDN 403s on adaptive URLs (e.g. androidSdkless).
+          // Muxed-only probe can hide CDN 403s on adaptive URLs (e.g. androidSdkless).
           final adaptive = streams.cast<StreamInfo?>().firstWhere(
             (s) => s is AudioOnlyStreamInfo || s is VideoOnlyStreamInfo,
             orElse: () => null,
           );
-          if (adaptive != null) {
-            final adaptiveHead = await _httpClient.head(adaptive.url);
-            if (adaptiveHead.statusCode == 403) {
-              throw YoutubeExplodeException(
-                'Video $videoId returned 403 (stream: ${adaptive.tag})',
-              );
-            }
+          if (adaptive != null && !identical(adaptive, probe)) {
+            await _assertStreamReachable(videoId, adaptive, probeHeaders);
           }
           uniqueStreams.addAll(streams);
           hlsManifestUrl ??= hlsUrlCandidate;
@@ -281,11 +276,17 @@ class StreamClient {
         );
       }
     }
+    final clientUa =
+        (ytClient.payload['context']?['client']?['userAgent']) as String?;
+    final probeHeaders = clientUa != null
+        ? <String, String>{'User-Agent': clientUa}
+        : const <String, String>{};
     onHlsManifest?.call(playerResponse.hlsManifestUrl);
     yield* _parseStreamInfo(
       playerResponse.streams,
       watchPage: watchPage,
       videoId: videoId,
+      probeHeaders: probeHeaders,
     );
 
     if (!playerResponse.dashManifestUrl.isNullOrWhiteSpace) {
@@ -296,6 +297,7 @@ class StreamClient {
         dashManifest.streams,
         watchPage: watchPage,
         videoId: videoId,
+        probeHeaders: probeHeaders,
       );
     }
     if (!playerResponse.hlsManifestUrl.isNullOrWhiteSpace) {
@@ -306,6 +308,7 @@ class StreamClient {
         hlsManifest.streams,
         watchPage: watchPage,
         videoId: videoId,
+        probeHeaders: probeHeaders,
       );
     }
   }
@@ -314,6 +317,7 @@ class StreamClient {
     Iterable<StreamInfoProvider> streams, {
     WatchPage? watchPage,
     VideoId? videoId,
+    Map<String, String> probeHeaders = const {},
   }) async* {
     // First pass: collect all unique challenges
     final nChallenges = <String>{};
@@ -468,7 +472,11 @@ class StreamClient {
 
       final contentLength =
           stream.contentLength ??
-          (await _httpClient.getContentLength(url, validate: false)) ??
+          (await _httpClient.getContentLength(
+            url,
+            headers: probeHeaders,
+            validate: false,
+          )) ??
           0;
 
       if (contentLength <= 0) {
@@ -614,6 +622,30 @@ class StreamClient {
         throw YoutubeExplodeException('Could not extract stream codec');
       }
     }
+  }
+
+  Future<void> _assertStreamReachable(
+    VideoId videoId,
+    StreamInfo stream,
+    Map<String, String> probeHeaders,
+  ) async {
+    final response = await _httpClient.head(stream.url, headers: probeHeaders);
+    if (response.statusCode != 403) return;
+
+    // googlevideo rejects HEAD on ANDROID_VR / IOS streams with 403 while
+    // serving byte-range GET requests normally.
+    final rangeProbe = await _httpClient.get(
+      stream.url,
+      headers: {...probeHeaders, 'Range': 'bytes=0-0'},
+    );
+    if (rangeProbe.statusCode == 200 || rangeProbe.statusCode == 206) {
+      return;
+    }
+
+    throw FatalFailureException(
+      'Video $videoId returned 403 (stream: ${stream.tag})',
+      403,
+    );
   }
 
   /// Absolute http(s) URL with a non-empty host — safe for [HttpClient] HEAD/GET.
