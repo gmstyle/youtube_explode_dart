@@ -136,23 +136,37 @@ class StreamClient {
             );
           }
 
-          final probeCandidates = streams
+          final sabrStreams = streams.whereType<SabrStreamInfo>().toList();
+          final directStreams = streams
               .where((s) => s is! SabrStreamInfo)
               .toList();
-          if (probeCandidates.isNotEmpty) {
-            final probe = probeCandidates.first;
-            await _assertStreamReachable(videoId, probe, probeHeaders);
+          var acceptedStreams = streams;
+          if (directStreams.isNotEmpty) {
+            try {
+              final probe = directStreams.first;
+              await _assertStreamReachable(videoId, probe, probeHeaders);
 
-            // Muxed-only probe can hide CDN 403s on adaptive URLs (e.g. androidSdkless).
-            final adaptive = probeCandidates.cast<StreamInfo?>().firstWhere(
-              (s) => s is AudioOnlyStreamInfo || s is VideoOnlyStreamInfo,
-              orElse: () => null,
-            );
-            if (adaptive != null && !identical(adaptive, probe)) {
-              await _assertStreamReachable(videoId, adaptive, probeHeaders);
+              // Muxed-only probe can hide CDN 403s on adaptive URLs (e.g. androidSdkless).
+              final adaptive = directStreams.cast<StreamInfo?>().firstWhere(
+                (s) => s is AudioOnlyStreamInfo || s is VideoOnlyStreamInfo,
+                orElse: () => null,
+              );
+              if (adaptive != null && !identical(adaptive, probe)) {
+                await _assertStreamReachable(videoId, adaptive, probeHeaders);
+              }
+            } on FatalFailureException catch (e) {
+              if (sabrStreams.isNotEmpty) {
+                _logger.warning(
+                  'Direct stream probe failed ($e); falling back to '
+                  '${sabrStreams.length} SABR streams for $videoId.',
+                );
+                acceptedStreams = sabrStreams;
+              } else {
+                rethrow;
+              }
             }
           }
-          uniqueStreams.addAll(streams);
+          uniqueStreams.addAll(acceptedStreams);
           hlsManifestUrl ??= hlsUrlCandidate;
         });
         if (uniqueStreams.isNotEmpty) {

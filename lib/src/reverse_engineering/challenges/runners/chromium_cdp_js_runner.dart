@@ -215,7 +215,7 @@ class ChromiumCdpJsRunner extends BaseWebJsRunner {
   Future<String?> evaluateAsync(String jsCode) {
     return _serialized(() async {
       final wrapped =
-          'Promise.resolve().then(function() { return eval(${json.encode(jsCode)}); })'
+          'Promise.resolve().then(function() { return (0, eval)(${json.encode(jsCode)}); })'
           '.then(function(v) { return v == null ? null : String(v); })';
       final res = await _sendCommand('Runtime.evaluate', {
         'expression': wrapped,

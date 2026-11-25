@@ -924,5 +924,110 @@ ytcfg.set({"STS":20774,"EXTRA":"{ok}"});
           .toList();
       expect(streamed, orderedEquals([...initBytes, ...segBytes]));
     });
+
+    test('keeps SabrAudioStreamInfo when direct stream probe returns 403', () async {
+      final mockClient = MockClient((req) async {
+        if (req.method == 'HEAD') {
+          return http.Response('', 403, request: req);
+        }
+        if (req.url.host == 'cdn.example.com' && req.method == 'GET') {
+          return http.Response('', 403, request: req);
+        }
+        if (req.url.path == '/watch') {
+          return http.Response(
+            '''
+<!doctype html><html><head>
+<script>
+ytcfg.set({"EVENT_ID":"ev-1","VISITOR_DATA":"vd-remix","STS":20801});
+window.ytAtN(cb, {'R': ${jsonEncode(jsonEncode({
+                  'bgChallenge': {
+                    'interpreterUrl': {
+                      'privateDoNotAccessOrElseTrustedResourceUrlWrappedValue':
+                          'https://www.google.com/js/th/AbCdEfGhIjKlMnOpQrStUvWxYz123456.js',
+                    },
+                    'interpreterHash': 'hash123',
+                    'program': 'prog',
+                    'globalName': 'trayride',
+                  },
+                }))}});
+</script></head><body></body></html>
+''',
+            200,
+            request: req,
+          );
+        }
+        if (req.url.path.endsWith('/youtubei/v1/player')) {
+          return http.Response(
+            jsonEncode({
+              'playabilityStatus': {'status': 'OK'},
+              'videoDetails': {
+                'videoId': 'abcdefghijk',
+                'title': 'Song',
+                'author': 'Artist',
+                'lengthSeconds': '10',
+                'channelId': 'UC123',
+              },
+              'playerConfig': {
+                'mediaCommonConfig': {
+                  'mediaUstreamerRequestConfig': {
+                    'videoPlaybackUstreamerConfig': base64Url.encode([1, 2, 3]),
+                  },
+                },
+              },
+              'streamingData': {
+                'serverAbrStreamingUrl':
+                    'https://rr1.googlevideo.com/videoplayback?expire=9999999999',
+                'adaptiveFormats': [
+                  {
+                    'itag': 251,
+                    'url':
+                        'https://cdn.example.com/videoplayback?itag=251',
+                    'mimeType': 'audio/webm; codecs="opus"',
+                    'bitrate': 128000,
+                    'lastModified': '1700000',
+                    'approxDurationMs': '10000',
+                    'contentLength': '1024',
+                    'qualityLabel': 'AUDIO_QUALITY_MEDIUM',
+                  },
+                  {
+                    'itag': 137,
+                    'url':
+                        'https://cdn.example.com/videoplayback?itag=137',
+                    'mimeType': 'video/mp4; codecs="avc1.640028"',
+                    'bitrate': 2000000,
+                    'width': 1920,
+                    'height': 1080,
+                    'lastModified': '1700000',
+                    'approxDurationMs': '10000',
+                    'contentLength': '8192',
+                    'qualityLabel': '1080p',
+                  },
+                ],
+              },
+            }),
+            200,
+            request: req,
+          );
+        }
+        return http.Response('Not found', 404, request: req);
+      });
+
+      final yt = YoutubeExplode(
+        httpClient: YoutubeHttpClient(mockClient),
+        poTokenProvider: _PolicyFakePoProvider(),
+      );
+      addTearDown(yt.close);
+
+      final manifest = await yt.videos.streams.getManifest(
+        'abcdefghijk',
+        ytClients: const [YoutubeApiClient.webRemix],
+        requireWatchPage: false,
+      );
+
+      expect(manifest.sabrAudio, hasLength(1));
+      expect(manifest.audioOnly, isEmpty);
+      expect(manifest.videoOnly, isEmpty);
+      expect(manifest.muxed, isEmpty);
+    });
   });
 }

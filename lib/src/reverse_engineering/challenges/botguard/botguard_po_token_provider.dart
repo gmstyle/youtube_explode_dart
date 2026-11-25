@@ -123,14 +123,21 @@ class BotGuardPoTokenProvider extends BasePoTokenProvider {
               cached.visitorData == requestedVd);
 
       if (canReuseMinter) {
-        final contentToken = await _mintToken(videoId.value);
-        return PoTokenResult(
-          sessionPoToken: cached.sessionPoToken,
-          streamingDataPoToken: contentToken,
-          visitorData: cached.visitorData,
-          signatureTimestamp: cached.signatureTimestamp,
-          expiresAt: cached.expiresAt,
-        );
+        try {
+          final contentToken = await _mintToken(videoId.value);
+          return PoTokenResult(
+            sessionPoToken: cached.sessionPoToken,
+            streamingDataPoToken: contentToken,
+            visitorData: cached.visitorData,
+            signatureTimestamp: cached.signatureTimestamp,
+            expiresAt: cached.expiresAt,
+          );
+        } catch (e) {
+          _logger.warning(
+            'Cached BotGuard minter failed ($e); rebootstrapping session',
+          );
+          _cachedMinter = null;
+        }
       }
 
       return _bootstrapAndMint(
