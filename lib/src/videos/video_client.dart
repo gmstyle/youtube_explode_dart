@@ -3,6 +3,7 @@ import '../channels/channel_id.dart';
 import '../common/common.dart';
 import '../extensions/helpers_extension.dart';
 import '../reverse_engineering/challenges/js_challenge.dart';
+import '../reverse_engineering/challenges/po_token_provider.dart';
 import '../reverse_engineering/clients/related_videos_client.dart';
 import '../reverse_engineering/pages/watch_page.dart';
 import '../reverse_engineering/youtube_http_client.dart';
@@ -32,10 +33,17 @@ class VideoClient {
   CommentsClient get comments => commentsClient;
 
   /// Initializes an instance of [VideoClient].
-  VideoClient(this._httpClient, {BaseJSChallengeSolver? jsSolver})
-      : streamsClient = StreamClient(_httpClient, jsSolver: jsSolver),
-        closedCaptions = ClosedCaptionClient(_httpClient),
-        commentsClient = CommentsClient(_httpClient);
+  VideoClient(
+    this._httpClient, {
+    BaseJSChallengeSolver? jsSolver,
+    BasePoTokenProvider? poTokenProvider,
+  }) : streamsClient = StreamClient(
+         _httpClient,
+         jsSolver: jsSolver,
+         poTokenProvider: poTokenProvider,
+       ),
+       closedCaptions = ClosedCaptionClient(_httpClient),
+       commentsClient = CommentsClient(_httpClient);
 
   /// Gets the metadata associated with the specified video.
   Future<Video> _getVideoFromWatchPage(VideoId videoId) async {

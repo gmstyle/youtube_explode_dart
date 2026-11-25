@@ -103,6 +103,20 @@ class PlayerResponse {
       root.getJson<String>('streamingData/dashManifestUrl');
 
   ///
+  String? get serverAbrStreamingUrl =>
+      root.getJson<String>('streamingData/serverAbrStreamingUrl');
+
+  ///
+  String? get videoPlaybackUstreamerConfig => root.getJson<String>(
+    'playerConfig/mediaCommonConfig/mediaUstreamerRequestConfig/videoPlaybackUstreamerConfig',
+  );
+
+  ///
+  bool get hasSabrStreaming =>
+      !serverAbrStreamingUrl.isNullOrWhiteSpace &&
+      !videoPlaybackUstreamerConfig.isNullOrWhiteSpace;
+
+  ///
   late final List<StreamInfoProvider> muxedStreams = root
           .getJson<List<dynamic>>('streamingData/formats')
           ?.map((e) => _StreamInfo(e as JsonMap, StreamSource.muxed))
@@ -272,6 +286,43 @@ class _StreamInfo extends StreamInfoProvider {
 
   @override
   final StreamSource source;
+
+  @override
+  late final int? lastModified = int.tryParse(
+    root.getT<String>('lastModified') ?? '',
+  );
+
+  @override
+  late final String? xtags = root.getT<String>('xtags');
+
+  @override
+  late final int? approxDurationMs = int.tryParse(
+    root.getT<String>('approxDurationMs') ?? '',
+  );
+
+  @override
+  late final bool isDrc = root.getT<bool>('isDrc') ?? false;
+
+  @override
+  late final ({int start, int end})? initRange = _parseByteRange('initRange');
+
+  @override
+  late final ({int start, int end})? indexRange = _parseByteRange('indexRange');
+
+  ({int start, int end})? _parseByteRange(String key) {
+    final map = root[key];
+    if (map is! Map) return null;
+    final startRaw = map['start'];
+    final endRaw = map['end'];
+    final start = startRaw is int
+        ? startRaw
+        : int.tryParse(startRaw?.toString() ?? '');
+    final end = endRaw is int
+        ? endRaw
+        : int.tryParse(endRaw?.toString() ?? '');
+    if (start == null || end == null || start < 0 || end < start) return null;
+    return (start: start, end: end);
+  }
 
   _StreamInfo(this.root, this.source);
 }

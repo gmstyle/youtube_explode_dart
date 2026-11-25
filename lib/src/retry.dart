@@ -44,5 +44,8 @@ int getExceptionCost(Exception e) {
   if (e is VideoUnplayableException || e is VideoUnavailableException) {
     return 5;
   }
+  if (e is SabrProtocolException) {
+    return e.kind == SabrFailureKind.network ? 1 : 5;
+  }
   return 1;
 }

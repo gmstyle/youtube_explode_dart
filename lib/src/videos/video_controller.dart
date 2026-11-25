@@ -4,6 +4,7 @@ import 'package:logging/logging.dart';
 import 'package:meta/meta.dart';
 
 import '../../youtube_explode_dart.dart';
+import '../reverse_engineering/challenges/po_token_policy.dart';
 import '../reverse_engineering/pages/watch_page.dart';
 import '../reverse_engineering/player/player_response.dart';
 
@@ -15,6 +16,7 @@ class VideoController {
     'VISIONOS',
     'ANDROID_VR',
     'IOS',
+    'TVHTML5_SIMPLY',
   };
 
   @protected
@@ -29,6 +31,9 @@ class VideoController {
     VideoId videoId,
     YoutubeApiClient client, {
     WatchPage? watchPage,
+    String? sessionPoToken,
+    String? visitorDataOverride,
+    String? signatureTimestampOverride,
   }) async {
     final payload = client.payload;
     assert(payload['context'] != null, 'client must contain a context');
@@ -43,13 +48,15 @@ class VideoController {
     final clientName = rawClient['clientName'] as String;
     final clientVersion = rawClient['clientVersion'] as String?;
     final ytCfg = watchPage?.ytCfg;
+    final policy = YoutubeClientPoPolicy.forClientName(clientName);
 
-    var visitorData =
-        (ytCfg?['VISITOR_DATA'] as String?) ??
-        ((ytCfg?['INNERTUBE_CONTEXT'] as Map?)?['client']
-                as Map?)?['visitorData']
-            as String? ??
-        (rawClient['visitorData'] as String?);
+    var visitorData = (visitorDataOverride != null && visitorDataOverride.isNotEmpty)
+        ? visitorDataOverride
+        : (ytCfg?['VISITOR_DATA'] as String?) ??
+              ((ytCfg?['INNERTUBE_CONTEXT'] as Map?)?['client']
+                      as Map?)?['visitorData']
+                  as String? ??
+              (rawClient['visitorData'] as String?);
     if (visitorData != null && visitorData.isEmpty) {
       visitorData = null;
     }
@@ -72,8 +79,10 @@ class VideoController {
       'IOS',
       'ANDROID',
       'ANDROID_MUSIC',
+      'TVHTML5_SIMPLY',
     };
     final isNativeClient = nativeClients.contains(clientName);
+    final sts = signatureTimestampOverride ?? ytCfg?['STS']?.toString();
 
     Future<PlayerResponse> postPlayer(String? vd) async {
       final clonedClient = Map<String, dynamic>.from(rawClient);
@@ -89,12 +98,16 @@ class VideoController {
         ...payload,
         'context': clonedContext,
         'videoId': videoId.value,
-        if (ytCfg?.containsKey('STS') ?? false)
+        if (sts != null && sts.isNotEmpty)
           'playbackContext': {
             'contentPlaybackContext': {
               'html5Preference': 'HTML5_PREF_WANTS',
-              'signatureTimestamp': ytCfg!['STS'].toString(),
+              'signatureTimestamp': sts,
             },
+          },
+        if (sessionPoToken != null && sessionPoToken.isNotEmpty)
+          'serviceIntegrityDimensions': {
+            'poToken': sessionPoToken,
           },
       };
 
@@ -108,7 +121,8 @@ class VideoController {
           if (vd != null && vd.isNotEmpty) 'X-Goog-Visitor-Id': vd,
           if (!isNativeClient) 'Origin': 'https://www.youtube.com',
           'Content-Type': 'application/json',
-          if (watchPage != null) 'Cookie': watchPage.cookieString,
+          if (watchPage != null && policy.supportsCookies)
+            'Cookie': watchPage.cookieString,
           ...client.headers,
         },
       );

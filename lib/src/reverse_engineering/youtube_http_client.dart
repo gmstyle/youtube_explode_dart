@@ -385,7 +385,19 @@ class YoutubeHttpClient extends http.BaseClient {
     _logger.fine('Sending request: $request', null, StackTrace.current);
     _logger.finer('Request headers: ${request.headers}');
     if (request is http.Request) {
-      _logger.finer('Request body: ${request.body}');
+      final contentType = request.headers.entries
+          .firstWhereOrNull((e) => e.key.toLowerCase() == 'content-type')
+          ?.value
+          .toLowerCase();
+      if (contentType != null &&
+          (contentType.contains('protobuf') ||
+              contentType.contains('octet-stream'))) {
+        _logger.finer(
+          'Request body: <binary ${request.bodyBytes.length} bytes>',
+        );
+      } else {
+        _logger.finer('Request body: ${request.body}');
+      }
     }
     return _httpClient.send(request);
   }

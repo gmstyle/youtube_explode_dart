@@ -69,4 +69,16 @@ abstract class StreamInfoProvider {
   bool get videoOnly => false;
 
   int? get audioItag => null;
+
+  int? get lastModified => null;
+
+  String? get xtags => null;
+
+  int? get approxDurationMs => null;
+
+  bool get isDrc => false;
+
+  ({int start, int end})? get initRange => null;
+
+  ({int start, int end})? get indexRange => null;
 }

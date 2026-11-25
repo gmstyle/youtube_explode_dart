@@ -15,3 +15,14 @@ export 'mixins/video_stream_info.dart';
 export 'types/hls/hls_audio_stream_info.dart';
 export 'types/hls/hls_video_stream_info.dart';
 export 'types/hls/hls_muxed_stream_info.dart';
+export 'mixins/sabr_stream_info.dart';
+export 'types/sabr/sabr_audio_stream_info.dart';
+export 'types/sabr/sabr_video_stream_info.dart';
+export '../../reverse_engineering/sabr/sabr_models.dart'
+    show
+        SabrBootstrap,
+        SabrByteRange,
+        SabrChunk,
+        SabrFormatId,
+        SabrMediaType;
+export '../../reverse_engineering/sabr/sabr_stream.dart' show SabrStream;

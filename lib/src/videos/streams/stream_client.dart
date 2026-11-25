@@ -1,15 +1,21 @@
 import 'dart:collection';
+import 'dart:convert';
+import 'dart:typed_data';
 
+import 'package:collection/collection.dart';
 import 'package:logging/logging.dart';
 
 import '../../exceptions/exceptions.dart';
 import '../../extensions/helpers_extension.dart';
 import '../../retry.dart';
 import '../../reverse_engineering/challenges/js_challenge.dart';
+import '../../reverse_engineering/challenges/po_token_policy.dart';
+import '../../reverse_engineering/challenges/po_token_provider.dart';
 import '../../reverse_engineering/cipher/cipher_manifest.dart';
 import '../../reverse_engineering/heuristics.dart';
 import '../../reverse_engineering/models/stream_info_provider.dart';
 import '../../reverse_engineering/pages/watch_page.dart';
+import '../../reverse_engineering/player/player_response.dart';
 import '../../reverse_engineering/player/player_source.dart';
 import '../../reverse_engineering/youtube_http_client.dart';
 import '../video_id.dart';
@@ -23,12 +29,16 @@ class StreamClient {
   final YoutubeHttpClient _httpClient;
   final StreamController _controller;
   final BaseJSChallengeSolver? _jsChallengeSolver;
+  final BasePoTokenProvider? _poTokenProvider;
   final Map<String, CipherManifest> _cipherManifestCache = {};
 
   /// Initializes an instance of [StreamClient]
-  StreamClient(this._httpClient, {BaseJSChallengeSolver? jsSolver})
-    : _controller = StreamController(_httpClient),
-      _jsChallengeSolver = jsSolver;
+  StreamClient(
+    this._httpClient, {
+    BaseJSChallengeSolver? jsSolver,
+    this._poTokenProvider,
+  }) : _controller = StreamController(_httpClient),
+       _jsChallengeSolver = jsSolver;
 
   /// Gets the manifest that contains information
   /// about available streams in the specified video.
@@ -126,16 +136,21 @@ class StreamClient {
             );
           }
 
-          final probe = streams.first;
-          await _assertStreamReachable(videoId, probe, probeHeaders);
+          final probeCandidates = streams
+              .where((s) => s is! SabrStreamInfo)
+              .toList();
+          if (probeCandidates.isNotEmpty) {
+            final probe = probeCandidates.first;
+            await _assertStreamReachable(videoId, probe, probeHeaders);
 
-          // Muxed-only probe can hide CDN 403s on adaptive URLs (e.g. androidSdkless).
-          final adaptive = streams.cast<StreamInfo?>().firstWhere(
-            (s) => s is AudioOnlyStreamInfo || s is VideoOnlyStreamInfo,
-            orElse: () => null,
-          );
-          if (adaptive != null && !identical(adaptive, probe)) {
-            await _assertStreamReachable(videoId, adaptive, probeHeaders);
+            // Muxed-only probe can hide CDN 403s on adaptive URLs (e.g. androidSdkless).
+            final adaptive = probeCandidates.cast<StreamInfo?>().firstWhere(
+              (s) => s is AudioOnlyStreamInfo || s is VideoOnlyStreamInfo,
+              orElse: () => null,
+            );
+            if (adaptive != null && !identical(adaptive, probe)) {
+              await _assertStreamReachable(videoId, adaptive, probeHeaders);
+            }
           }
           uniqueStreams.addAll(streams);
           hlsManifestUrl ??= hlsUrlCandidate;
@@ -205,8 +220,55 @@ class StreamClient {
   /// Gets the actual stream which is identified by the specified metadata.
   /// Usually this downloads the bytes of the stream.
   /// For HLS streams all the fragments are concatenated into a single stream.
-  Stream<List<int>> get(StreamInfo streamInfo) =>
-      _httpClient.getStream(streamInfo, streamClient: this);
+  /// For SABR streams this opens a [SabrStream] and emits its container bytes.
+  Stream<List<int>> get(StreamInfo streamInfo) {
+    if (streamInfo is SabrStreamInfo) {
+      return openSabrStream(streamInfo).bytes();
+    }
+    return _httpClient.getStream(streamInfo, streamClient: this);
+  }
+
+  /// Opens a controllable [SabrStream] for [streamInfo], supporting time-based
+  /// seeking via [initialPlayerTimeMs], readahead pacing via [playbackPositionMs],
+  /// and deferred GVS PO token supply via [lateTokenSupplier].
+  SabrStream openSabrStream(
+    SabrStreamInfo streamInfo, {
+    int initialPlayerTimeMs = 0,
+    int Function()? playbackPositionMs,
+    Future<Uint8List?> Function()? lateTokenSupplier,
+  }) {
+    final bootstrap = streamInfo.sabrBootstrap;
+    var effectiveLateSupplier = lateTokenSupplier;
+    if (effectiveLateSupplier == null &&
+        bootstrap.poToken == null &&
+        _poTokenProvider != null) {
+      final clientForToken = _clientForId(bootstrap.clientNameId);
+      if (clientForToken != null &&
+          YoutubeClientPoPolicy.forClient(clientForToken).usesGvsPoToken) {
+        effectiveLateSupplier = () async {
+          final res = await _poTokenProvider.getPoToken(
+            client: clientForToken,
+            videoId: streamInfo.videoId,
+            visitorData: bootstrap.tokenVisitorData,
+          );
+          final tok = res?.streamingDataPoToken;
+          if (tok == null || tok.isEmpty) return null;
+          return _decodeBase64Url(tok);
+        };
+      }
+    }
+
+    return SabrStream(
+      httpClient: _httpClient,
+      bootstrap: bootstrap,
+      mediaType: streamInfo is SabrVideoStreamInfo
+          ? SabrMediaType.video
+          : SabrMediaType.audio,
+      initialPlayerTimeMs: initialPlayerTimeMs,
+      playbackPositionMs: playbackPositionMs,
+      lateTokenSupplier: effectiveLateSupplier,
+    );
+  }
 
   Stream<StreamInfo> _getStreams(
     VideoId videoId, {
@@ -235,10 +297,50 @@ class StreamClient {
     if (requireWatchPage) {
       watchPage = await WatchPage.get(_httpClient, videoId.value);
     }
+
+    final policy = YoutubeClientPoPolicy.forClient(ytClient);
+    PoTokenResult? poTokenResult;
+    Future<PoTokenResult?>? poTokenFuture;
+
+    if (_poTokenProvider != null &&
+        (policy.requiresPlayerPoToken || policy.usesGvsPoToken)) {
+      if (policy.requiresPlayerPoToken) {
+        try {
+          poTokenResult = await _poTokenProvider.getPoToken(
+            client: ytClient,
+            videoId: videoId,
+            watchPage: watchPage,
+          );
+        } catch (e, s) {
+          _logger.warning('PO token provider failed for /player: $e', e, s);
+        }
+      } else {
+        poTokenFuture = _poTokenProvider
+            .getPoToken(
+              client: ytClient,
+              videoId: videoId,
+              watchPage: watchPage,
+            )
+            .then<PoTokenResult?>((res) {
+              poTokenResult = res;
+              return res;
+            })
+            .catchError((Object e, StackTrace s) {
+              _logger.warning('PO token provider failed: $e', e, s);
+              return null;
+            });
+      }
+    }
+
     var playerResponse = await _controller.getPlayerResponse(
       videoId,
       ytClient,
       watchPage: watchPage,
+      sessionPoToken: policy.requiresPlayerPoToken
+          ? poTokenResult?.sessionPoToken
+          : null,
+      visitorDataOverride: poTokenResult?.visitorData,
+      signatureTimestampOverride: poTokenResult?.signatureTimestamp,
     );
 
     if (!playerResponse.previewVideoId.isNullOrWhiteSpace) {
@@ -262,54 +364,340 @@ class StreamClient {
     final hasCipheredStreams = playerResponse.streams.any(
       (s) => s.signatureParameter != null && s.signature != null,
     );
-    if (watchPage == null && hasCipheredStreams) {
+    final sabrNeedsNDecipher =
+        _jsChallengeSolver != null &&
+        playerResponse.hasSabrStreaming &&
+        (Uri.tryParse(
+              playerResponse.serverAbrStreamingUrl ?? '',
+            )?.queryParameters.containsKey('n') ??
+            false);
+    if (watchPage == null && (hasCipheredStreams || sabrNeedsNDecipher)) {
       watchPage = await WatchPage.get(_httpClient, videoId.value);
-      playerResponse = await _controller.getPlayerResponse(
-        videoId,
-        ytClient,
-        watchPage: watchPage,
-      );
-      if (!playerResponse.isVideoPlayable) {
-        throw VideoUnplayableException.unplayable(
+      if (_poTokenProvider != null &&
+          policy.requiresPlayerPoToken &&
+          poTokenResult == null) {
+        try {
+          poTokenResult = await _poTokenProvider.getPoToken(
+            client: ytClient,
+            videoId: videoId,
+            watchPage: watchPage,
+          );
+        } catch (e, s) {
+          _logger.warning('PO token retry failed: $e', e, s);
+        }
+      }
+      if (hasCipheredStreams) {
+        playerResponse = await _controller.getPlayerResponse(
           videoId,
-          reason: playerResponse.videoPlayabilityError ?? '',
+          ytClient,
+          watchPage: watchPage,
+          sessionPoToken: policy.requiresPlayerPoToken
+              ? poTokenResult?.sessionPoToken
+              : null,
+          visitorDataOverride: poTokenResult?.visitorData,
+          signatureTimestampOverride: poTokenResult?.signatureTimestamp,
         );
+        if (!playerResponse.isVideoPlayable) {
+          throw VideoUnplayableException.unplayable(
+            videoId,
+            reason: playerResponse.videoPlayabilityError ?? '',
+          );
+        }
       }
     }
+
     final clientUa =
         (ytClient.payload['context']?['client']?['userAgent']) as String?;
     final probeHeaders = clientUa != null
         ? <String, String>{'User-Agent': clientUa}
         : const <String, String>{};
     onHlsManifest?.call(playerResponse.hlsManifestUrl);
+
+    if (playerResponse.hasSabrStreaming) {
+      if (poTokenFuture != null &&
+          poTokenResult == null &&
+          !policy.sabrAllowsLateToken) {
+        poTokenResult = await poTokenFuture;
+      }
+      yield* _parseSabrStreams(
+        videoId: videoId,
+        ytClient: ytClient,
+        policy: policy,
+        playerResponse: playerResponse,
+        watchPage: watchPage,
+        poTokenResult: poTokenResult,
+      );
+    }
+
+    final hasDirectStreams =
+        playerResponse.streams.any((s) => s.url.isNotEmpty) ||
+        !playerResponse.dashManifestUrl.isNullOrWhiteSpace ||
+        !playerResponse.hlsManifestUrl.isNullOrWhiteSpace;
+    if (hasDirectStreams && poTokenFuture != null && poTokenResult == null) {
+      poTokenResult = await poTokenFuture;
+    }
+    final gvsPoToken = policy.usesGvsPoToken
+        ? poTokenResult?.streamingDataPoToken
+        : null;
+
     yield* _parseStreamInfo(
       playerResponse.streams,
       watchPage: watchPage,
       videoId: videoId,
       probeHeaders: probeHeaders,
+      gvsPoToken: gvsPoToken,
     );
 
     if (!playerResponse.dashManifestUrl.isNullOrWhiteSpace) {
-      final dashManifest = await _controller.getDashManifest(
-        playerResponse.dashManifestUrl!,
-      );
+      final dashUrl = gvsPoToken != null && gvsPoToken.isNotEmpty
+          ? _appendGvsPoToManifestPath(
+              Uri.parse(playerResponse.dashManifestUrl!),
+              gvsPoToken,
+            ).toString()
+          : playerResponse.dashManifestUrl!;
+      final dashManifest = await _controller.getDashManifest(dashUrl);
       yield* _parseStreamInfo(
         dashManifest.streams,
         watchPage: watchPage,
         videoId: videoId,
         probeHeaders: probeHeaders,
+        gvsPoToken: gvsPoToken,
       );
     }
     if (!playerResponse.hlsManifestUrl.isNullOrWhiteSpace) {
-      final hlsManifest = await _controller.getHlsManifest(
-        playerResponse.hlsManifestUrl!,
-      );
+      final hlsUrl = gvsPoToken != null && gvsPoToken.isNotEmpty
+          ? _appendGvsPoToManifestPath(
+              Uri.parse(playerResponse.hlsManifestUrl!),
+              gvsPoToken,
+            ).toString()
+          : playerResponse.hlsManifestUrl!;
+      final hlsManifest = await _controller.getHlsManifest(hlsUrl);
       yield* _parseStreamInfo(
         hlsManifest.streams,
         watchPage: watchPage,
         videoId: videoId,
         probeHeaders: probeHeaders,
+        gvsPoToken: gvsPoToken,
       );
+    }
+  }
+
+  Stream<StreamInfo> _parseSabrStreams({
+    required VideoId videoId,
+    required YoutubeApiClient ytClient,
+    required YoutubeClientPoPolicy policy,
+    required PlayerResponse playerResponse,
+    WatchPage? watchPage,
+    PoTokenResult? poTokenResult,
+  }) async* {
+    final rawSabrUrl = playerResponse.serverAbrStreamingUrl;
+    final rawUstreamer = playerResponse.videoPlaybackUstreamerConfig;
+    if (rawSabrUrl == null || rawSabrUrl.isEmpty || rawUstreamer == null) {
+      return;
+    }
+
+    var sabrUri = Uri.parse(rawSabrUrl);
+    if (_jsChallengeSolver != null &&
+        watchPage?.sourceUrl != null &&
+        sabrUri.queryParameters.containsKey('n')) {
+      final nParam = sabrUri.queryParameters['n']!;
+      try {
+        final solvedN = await _jsChallengeSolver.solve(
+          watchPage!.sourceUrl!,
+          JSChallengeType.n,
+          nParam,
+        );
+        sabrUri = sabrUri.setQueryParam('n', solvedN);
+      } catch (e) {
+        _logger.warning('Could not decipher SABR n parameter: $e');
+      }
+    }
+
+    final Uint8List ustreamerBytes;
+    try {
+      ustreamerBytes = _decodeBase64Url(rawUstreamer);
+    } catch (e) {
+      _logger.warning('Invalid videoPlaybackUstreamerConfig: $e');
+      return;
+    }
+
+    final discardVideo = playerResponse.adaptiveStreams
+        .where(
+          (s) =>
+              !s.audioOnly &&
+              (s.videoHeight ?? 0) > 0 &&
+              (s.lastModified ?? 0) > 0,
+        )
+        .sorted(
+          (a, b) => (a.videoHeight ?? 0) != (b.videoHeight ?? 0)
+              ? (a.videoHeight ?? 0).compareTo(b.videoHeight ?? 0)
+              : (a.bitrate ?? 0).compareTo(b.bitrate ?? 0),
+        )
+        .firstOrNull;
+    if (discardVideo == null) {
+      return;
+    }
+
+    final clientMap =
+        (ytClient.payload['context'] as Map<String, dynamic>)['client']
+            as Map<String, dynamic>;
+    final clientName = clientMap['clientName'] as String;
+    final clientVersion = clientMap['clientVersion'] as String? ?? '';
+    final clientNameId = YoutubeApiClient.clientIdForClientName(clientName);
+    if (clientNameId == null) return;
+    final clientUa = clientMap['userAgent'] as String?;
+
+    final rawPoToken = policy.usesGvsPoToken
+        ? poTokenResult?.streamingDataPoToken
+        : null;
+    Uint8List? poTokenBytes;
+    if (rawPoToken != null && rawPoToken.isNotEmpty) {
+      try {
+        poTokenBytes = _decodeBase64Url(rawPoToken);
+      } catch (e) {
+        _logger.warning('Invalid GVS PO token bytes: $e');
+      }
+    }
+
+    final discardFormatId = SabrFormatId(
+      discardVideo.tag,
+      lastModified: discardVideo.lastModified ?? 0,
+      xtags: discardVideo.xtags,
+    );
+    final discardHeight = discardVideo.videoHeight ?? 144;
+    final fallbackDurationMs = playerResponse.videoDuration.inMilliseconds;
+    final sabrUrlStr = sabrUri.toString();
+
+    for (final stream in playerResponse.adaptiveStreams) {
+      final lmt = stream.lastModified;
+      if (stream.tag <= 0 || lmt == null || lmt <= 0) continue;
+      final durationMs = (stream.approxDurationMs != null &&
+              stream.approxDurationMs! > 0)
+          ? stream.approxDurationMs!
+          : fallbackDurationMs;
+      if (durationMs <= 0) continue;
+
+      final bitrateVal = stream.bitrate;
+      if (bitrateVal == null || bitrateVal <= 0) continue;
+      final contentLen =
+          stream.contentLength ?? ((bitrateVal * durationMs) ~/ 8000);
+      if (contentLen <= 0) continue;
+
+      final initRange = stream.initRange != null
+          ? SabrByteRange(stream.initRange!.start, stream.initRange!.end)
+          : null;
+      final indexRange = stream.indexRange != null
+          ? SabrByteRange(stream.indexRange!.start, stream.indexRange!.end)
+          : null;
+
+      final container = StreamContainer.parse(stream.container!);
+      final fileSize = FileSize(contentLen);
+      final bitrate = Bitrate(bitrateVal);
+      final duration = Duration(milliseconds: durationMs);
+      final formatId = SabrFormatId(
+        stream.tag,
+        lastModified: lmt,
+        xtags: stream.xtags,
+      );
+
+      final videoCodec = stream.videoCodec;
+      final audioCodec = stream.audioCodec;
+
+      if (!videoCodec.isNullOrWhiteSpace) {
+        final framerate = Framerate(stream.framerate ?? 24);
+        final videoQuality = VideoQualityUtil.fromLabel(stream.qualityLabel);
+        final w = stream.videoWidth;
+        final h = stream.videoHeight;
+        final res = (w != null && h != null)
+            ? VideoResolution(w, h)
+            : videoQuality.toVideoResolution();
+
+        final bootstrap = SabrBootstrap(
+          videoId: videoId.value,
+          serverAbrStreamingUrl: sabrUrlStr,
+          videoPlaybackUstreamerConfig: ustreamerBytes,
+          clientNameId: clientNameId,
+          clientVersion: clientVersion,
+          audioFormat: formatId,
+          discardVideoFormat: discardFormatId,
+          discardVideoHeight: discardHeight,
+          selectedVideoFormat: formatId,
+          selectedVideoWidth: w,
+          selectedVideoHeight: h,
+          selectedVideoContentLengthBytes: stream.contentLength,
+          selectedVideoMimeType: stream.codec.mimeType,
+          selectedVideoBitrate: bitrateVal,
+          durationMs: durationMs,
+          contentLengthBytes: stream.contentLength,
+          mimeType: stream.codec.mimeType,
+          poToken: poTokenBytes,
+          requestUserAgent: clientUa,
+          requestOrigin: policy.sabrOrigin,
+          tokenVisitorData: poTokenResult?.visitorData,
+          initRange: initRange,
+          indexRange: indexRange,
+        );
+
+        yield SabrVideoStreamInfo(
+          videoId,
+          stream.tag,
+          sabrUri,
+          container,
+          fileSize,
+          bitrate,
+          videoCodec!,
+          videoQuality.qualityString,
+          videoQuality,
+          res,
+          framerate,
+          const [],
+          stream.codec,
+          bootstrap,
+          duration,
+          initRange: initRange,
+          indexRange: indexRange,
+        );
+      } else if (!audioCodec.isNullOrWhiteSpace) {
+        final bootstrap = SabrBootstrap(
+          videoId: videoId.value,
+          serverAbrStreamingUrl: sabrUrlStr,
+          videoPlaybackUstreamerConfig: ustreamerBytes,
+          clientNameId: clientNameId,
+          clientVersion: clientVersion,
+          audioFormat: formatId,
+          discardVideoFormat: discardFormatId,
+          discardVideoHeight: discardHeight,
+          durationMs: durationMs,
+          contentLengthBytes: stream.contentLength,
+          mimeType: stream.codec.mimeType,
+          audioTrackId: stream.audioTrack?.id,
+          isDrc: stream.isDrc,
+          poToken: poTokenBytes,
+          requestUserAgent: clientUa,
+          requestOrigin: policy.sabrOrigin,
+          tokenVisitorData: poTokenResult?.visitorData,
+          initRange: initRange,
+          indexRange: indexRange,
+        );
+
+        yield SabrAudioStreamInfo(
+          videoId,
+          stream.tag,
+          sabrUri,
+          container,
+          fileSize,
+          bitrate,
+          audioCodec!,
+          stream.qualityLabel ?? '',
+          const [],
+          stream.codec,
+          stream.audioTrack,
+          bootstrap,
+          duration,
+          initRange: initRange,
+          indexRange: indexRange,
+        );
+      }
     }
   }
 
@@ -318,6 +706,7 @@ class StreamClient {
     WatchPage? watchPage,
     VideoId? videoId,
     Map<String, String> probeHeaders = const {},
+    String? gvsPoToken,
   }) async* {
     // First pass: collect all unique challenges
     final nChallenges = <String>{};
@@ -467,6 +856,14 @@ class StreamClient {
               );
             }
           }
+        }
+      }
+
+      if (gvsPoToken != null && gvsPoToken.isNotEmpty) {
+        if (stream.source == StreamSource.hls) {
+          url = _appendGvsPoToManifestPath(url, gvsPoToken);
+        } else {
+          url = url.setQueryParam('pot', gvsPoToken);
         }
       }
 
@@ -653,5 +1050,34 @@ class StreamClient {
       (url.scheme == 'http' || url.scheme == 'https') && url.host.isNotEmpty;
 
   static bool _hasPlayableUrl(StreamInfo stream) =>
-      _isAbsoluteHttpUrl(stream.url);
+      stream is SabrStreamInfo || _isAbsoluteHttpUrl(stream.url);
+
+  static Uri _appendGvsPoToManifestPath(Uri url, String token) {
+    final segments = List<String>.from(url.pathSegments);
+    final potIndex = segments.indexOf('pot');
+    if (potIndex != -1 && potIndex + 1 < segments.length) {
+      segments[potIndex + 1] = token;
+    } else {
+      segments.addAll(['pot', token]);
+    }
+    return url.replace(pathSegments: segments);
+  }
+
+  static Uint8List _decodeBase64Url(String value) {
+    final normalized = value.replaceAll('-', '+').replaceAll('_', '/');
+    final padded = normalized.padRight(
+      normalized.length + (4 - normalized.length % 4) % 4,
+      '=',
+    );
+    return Uint8List.fromList(base64Decode(padded));
+  }
+
+  static YoutubeApiClient? _clientForId(int clientId) => switch (clientId) {
+    1 => YoutubeApiClient.web,
+    2 => YoutubeApiClient.mweb,
+    67 => YoutubeApiClient.webRemix,
+    75 => YoutubeApiClient.tvHtml5Simply,
+    101 => YoutubeApiClient.visionosSabr,
+    _ => null,
+  };
 }

@@ -227,6 +227,98 @@ class YoutubeApiClient {
     'racyCheckOk': true,
   }, 'https://www.youtube.com/youtubei/v1/player?prettyPrint=false');
 
+  /// YouTube Music endpoint for VISIONOS; returns tokenless, cipher-free SABR
+  /// audio and video streams suitable for unauthenticated playback.
+  static const visionosSabr = YoutubeApiClient({
+    'context': {
+      'client': {
+        'clientName': 'VISIONOS',
+        'clientVersion': '1.02',
+        'deviceMake': 'Apple',
+        'deviceModel': 'RealityDevice17,1',
+        'userAgent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15',
+        'osName': 'visionOS',
+        'osVersion': '26.5.23O471',
+        'hl': 'en',
+        'timeZone': 'UTC',
+        'utcOffsetMinutes': 0,
+      },
+    },
+    'contentCheckOk': true,
+    'racyCheckOk': true,
+  }, 'https://music.youtube.com/youtubei/v1/player?prettyPrint=false');
+
+  /// YouTube Music web client supporting both cookie-authenticated and
+  /// anonymous sessions, SABR, and GVS PO Tokens.
+  static const webRemix = YoutubeApiClient(
+    {
+      'context': {
+        'client': {
+          'clientName': 'WEB_REMIX',
+          'clientVersion': '1.20260707.12.00',
+          'userAgent':
+              'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36',
+          'hl': 'en',
+          'gl': 'US',
+          'timeZone': 'UTC',
+          'utcOffsetMinutes': 0,
+        },
+      },
+      'contentCheckOk': true,
+      'racyCheckOk': true,
+    },
+    'https://music.youtube.com/youtubei/v1/player?prettyPrint=false',
+    headers: {
+      'Origin': 'https://music.youtube.com',
+    },
+  );
+
+  /// Standard desktop Web client supporting SABR, cookies, and GVS PO Tokens.
+  static const web = YoutubeApiClient(
+    {
+      'context': {
+        'client': {
+          'clientName': 'WEB',
+          'clientVersion': '2.20260708.00.00',
+          'userAgent':
+              'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36',
+          'hl': 'en',
+          'gl': 'US',
+          'timeZone': 'UTC',
+          'utcOffsetMinutes': 0,
+        },
+      },
+      'contentCheckOk': true,
+      'racyCheckOk': true,
+    },
+    'https://www.youtube.com/youtubei/v1/player?prettyPrint=false',
+    headers: {
+      'Origin': 'https://www.youtube.com',
+    },
+  );
+
+  /// Cookieless TVHTML5_SIMPLY client requiring both player and GVS PO Tokens.
+  static const tvHtml5Simply = YoutubeApiClient(
+    {
+      'context': {
+        'client': {
+          'clientName': 'TVHTML5_SIMPLY',
+          'clientVersion': '1.0',
+          'hl': 'en',
+          'gl': 'US',
+          'timeZone': 'UTC',
+          'utcOffsetMinutes': 0,
+        },
+      },
+      'contentCheckOk': true,
+      'racyCheckOk': true,
+    },
+    'https://www.youtube.com/youtubei/v1/player?prettyPrint=false',
+    headers: {
+      'Origin': 'https://www.youtube.com',
+    },
+  );
+
   @Deprecated('Youtube always requires authentication for this client')
   static const webCreator = YoutubeApiClient({
     'context': {
@@ -277,7 +369,9 @@ class YoutubeApiClient {
       'ANDROID' => android,
       'ANDROID_MUSIC' => androidMusic,
       'TVHTML5' => tv,
-      'WEB' => safari,
+      'TVHTML5_SIMPLY' => tvHtml5Simply,
+      'WEB_REMIX' => webRemix,
+      'WEB' => web,
       'MWEB' => mweb,
       _ => null,
     };
@@ -286,5 +380,24 @@ class YoutubeApiClient {
     final clientMap = context?['client'] as Map<String, dynamic>?;
     final ua = clientMap?['userAgent'] as String?;
     return (ua != null && ua.isNotEmpty) ? ua : null;
+  }
+
+  /// Returns the numeric InnerTube client ID for [clientName], or `null` if unknown.
+  static int? clientIdForClientName(String? clientName) {
+    if (clientName == null) return null;
+    return switch (clientName.trim().toUpperCase()) {
+      'WEB' => 1,
+      'MWEB' => 2,
+      'ANDROID' => 3,
+      'IOS' => 5,
+      'TVHTML5' => 7,
+      'ANDROID_MUSIC' => 21,
+      'ANDROID_VR' => 28,
+      'WEB_CREATOR' => 62,
+      'WEB_REMIX' => 67,
+      'TVHTML5_SIMPLY' => 75,
+      'VISIONOS' => 101,
+      _ => null,
+    };
   }
 }

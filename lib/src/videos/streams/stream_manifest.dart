@@ -47,6 +47,18 @@ class StreamManifest {
   late final UnmodifiableListView<HlsStreamInfo> hls =
       UnmodifiableListView(streams.whereType<HlsStreamInfo>());
 
+  /// Gets all SABR (Server-Adaptive Bitrate) streams in this manifest.
+  late final UnmodifiableListView<SabrStreamInfo> sabr =
+      UnmodifiableListView(streams.whereType<SabrStreamInfo>());
+
+  /// Gets SABR audio-only streams in this manifest.
+  late final UnmodifiableListView<SabrAudioStreamInfo> sabrAudio =
+      UnmodifiableListView(streams.whereType<SabrAudioStreamInfo>());
+
+  /// Gets SABR video-only streams in this manifest.
+  late final UnmodifiableListView<SabrVideoStreamInfo> sabrVideo =
+      UnmodifiableListView(streams.whereType<SabrVideoStreamInfo>());
+
   @override
   String toString() => streams.describe();
 }

@@ -39,3 +39,4 @@ false_secrets:
   - "lib/src/reverse_engineering/youtube_http_client.dart"
   - "lib/src/videos/video_controller.dart"
   - "lib/src/videos/youtube_api_client.dart"
+  - "lib/src/reverse_engineering/challenges/botguard/botguard_po_token_provider.dart"
