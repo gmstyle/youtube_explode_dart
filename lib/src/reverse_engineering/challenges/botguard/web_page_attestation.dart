@@ -9,7 +9,7 @@ const int _interpreterLimit = 8 * 1024 * 1024;
 const int _integrityLimit = 1024 * 1024;
 const int _decodedLimit = 64 * 1024;
 const int _identifierLimit = 1024;
-const int _jsonFieldLimit = 256;
+const int _jsonFieldLimit = 1024;
 
 final RegExp _ytConfigSetExp = RegExp(r'ytcfg\s*\.\s*set');
 final RegExp _ytAtNExp = RegExp(r'window\s*\.\s*ytAtN');
@@ -175,8 +175,7 @@ String parseAttestationChallengeData(
     }
     return json.encode({
       'interpreterJavascript': {
-        'privateDoNotAccessOrElseSafeScriptWrappedValue':
-            interpreterJavascript,
+        'privateDoNotAccessOrElseSafeScriptWrappedValue': interpreterJavascript,
         'privateDoNotAccessOrElseTrustedResourceUrlWrappedValue':
             interpreterUrl,
       },
@@ -323,13 +322,17 @@ const String kBotGuardRuntimeScript = r'''
 String _attestationInterpreterUrl(Map<String, dynamic> challenge) {
   final interpreterUrl = challenge['interpreterUrl'];
   if (interpreterUrl is! Map<String, dynamic>) {
-    throw PoTokenException('Attestation response has no BotGuard interpreter URL');
+    throw PoTokenException(
+      'Attestation response has no BotGuard interpreter URL',
+    );
   }
   _requireFieldCount(interpreterUrl);
   final value =
       interpreterUrl['privateDoNotAccessOrElseTrustedResourceUrlWrappedValue'];
   if (value is! String) {
-    throw PoTokenException('Attestation response has no BotGuard interpreter URL');
+    throw PoTokenException(
+      'Attestation response has no BotGuard interpreter URL',
+    );
   }
   _requireSize(value, _interpreterLimit, 'interpreter URL');
   return requireTrustedAttestationInterpreterUrl(value);
@@ -376,9 +379,9 @@ _extractYtCfgMetadata(String webPage) {
 
   var pos = 0;
   while (pos < webPage.length) {
-    final match = _ytConfigSetExp.firstMatch(webPage.substring(pos));
+    final match = _ytConfigSetExp.allMatches(webPage, pos).firstOrNull;
     if (match == null) break;
-    final absEnd = pos + match.end;
+    final absEnd = match.end;
     final openParen = webPage.indexOf('(', absEnd);
     if (openParen < 0) break;
     final scan = _extractJavaScriptObject(webPage, openParen + 1);
@@ -390,9 +393,7 @@ _extractYtCfgMetadata(String webPage) {
       if (decoded is! Map<String, dynamic>) continue;
       _requireFieldCount(decoded);
       final eid = decoded['EVENT_ID'];
-      if (eid is String &&
-          eid.isNotEmpty &&
-          eid.length <= _identifierLimit) {
+      if (eid is String && eid.isNotEmpty && eid.length <= _identifierLimit) {
         eventId ??= eid;
       }
       final vd = decoded['VISITOR_DATA'];
@@ -427,9 +428,9 @@ _extractYtCfgMetadata(String webPage) {
 ({String? challenge, String? eacrToken})? _extractYtAtN(String webPage) {
   var pos = 0;
   while (pos < webPage.length) {
-    final match = _ytAtNExp.firstMatch(webPage.substring(pos));
+    final match = _ytAtNExp.allMatches(webPage, pos).firstOrNull;
     if (match == null) break;
-    final absEnd = pos + match.end;
+    final absEnd = match.end;
     final scan = _extractYtAtNCall(webPage, absEnd);
     pos = scan.end;
     if (scan.challenge != null || scan.eacrToken != null) {
@@ -617,10 +618,7 @@ String? _decodeJavaScriptString(String source, int start) {
       case 'x':
         final digits = esc == 'u' ? 4 : 2;
         if (pos + digits > source.length) return null;
-        final cp = int.tryParse(
-          source.substring(pos, pos + digits),
-          radix: 16,
-        );
+        final cp = int.tryParse(source.substring(pos, pos + digits), radix: 16);
         if (cp == null) return null;
         out.writeCharCode(cp);
         pos += digits;

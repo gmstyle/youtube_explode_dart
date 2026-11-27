@@ -1,3 +1,9 @@
+## 3.3.0
+- Add pure-Dart SABR/UMP streaming transport (`SabrStream`, `SabrAudioStreamInfo`, `SabrVideoStreamInfo`, `StreamClient.openSabrStream`), falling back cleanly to SABR streams when direct stream URLs return HTTP 403.
+- Add `BasePoTokenProvider` and `BotGuardPoTokenProvider` along with shared `BaseWebJsRunner` (`ChromiumCdpJsRunner` for desktop and companion package `youtube_explode_webview` for Flutter WebView), `RunnerEJSSolver`, and `YoutubeClientPoPolicy`.
+- Add `YoutubeApiClient.visionosSabr`, `YoutubeApiClient.webRemix`, `YoutubeApiClient.web`, and `YoutubeApiClient.tvHtml5Simply`.
+- Fix SABR buffer aliasing on split UMP frames, `SabrVideoStreamInfo` discard audio format encoding, `SabrStream` cancel/pause backpressure and `SabrFailureKind.network` reporting, `BaseWebJsRunner.ensureContext` race-free initialization, `ChromiumCdpJsRunner` stdio drain/cleanup, `ytcfg` field limits, and direct-stream 403 refresh filtering.
+
 ## 3.2.1
 - Bootstrap anonymous `visitorData` via `/youtubei/v1/visitor_id` (with `sw.js_data` fallback) for `VISIONOS`, `ANDROID_VR`, and `IOS`, update `YoutubeApiClient.androidVr` to `1.65.10` and `YoutubeApiClient.tv` to `7.20261118.10.00`, fix brace-balanced `WatchPage.ytCfg` parsing, and fall back to a `GET` `Range: bytes=0-0` probe when `HEAD` returns `403`.
 - Add native Quest 3 `userAgent` to `YoutubeApiClient.androidVr`, update `YoutubeApiClient.androidMusic` (`8.05.50`), add `YoutubeApiClient.userAgentForClientName`, and add `contentCheckOk` / `racyCheckOk` flags to `visionos`, `androidVr`, `ios`, `androidMusic`, and `VideoController.getPlayerResponse`.

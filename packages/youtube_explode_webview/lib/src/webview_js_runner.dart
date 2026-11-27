@@ -16,7 +16,7 @@ abstract class WebViewJsAdapter {
 
 class _FlutterWebViewAdapter implements WebViewJsAdapter {
   final WebViewController _controller;
-  final Uri _allowedOrigin;
+  Uri _allowedOrigin;
   Completer<void>? _pageFinished;
 
   _FlutterWebViewAdapter({
@@ -52,7 +52,9 @@ class _FlutterWebViewAdapter implements WebViewJsAdapter {
             final c = _pageFinished;
             if (c != null && !c.isCompleted && (error.isForMainFrame ?? true)) {
               c.completeError(
-                StateError('WebView failed loading origin: ${error.description}'),
+                StateError(
+                  'WebView failed loading origin: ${error.description}',
+                ),
               );
             }
           },
@@ -62,7 +64,9 @@ class _FlutterWebViewAdapter implements WebViewJsAdapter {
 
   @override
   Future<void> loadHtml(String html, {required Uri baseUrl}) async {
+    _allowedOrigin = baseUrl;
     final completer = Completer<void>();
+    completer.future.catchError((_) {}).ignore();
     _pageFinished = completer;
     await _controller.loadHtmlString(html, baseUrl: baseUrl.toString());
     await completer.future;
@@ -73,15 +77,22 @@ class _FlutterWebViewAdapter implements WebViewJsAdapter {
       _controller.runJavaScript(jsCode);
 
   @override
-  void dispose() {}
+  void dispose() {
+    unawaited(_controller.loadHtmlString('about:blank').catchError((_) {}));
+    unawaited(
+      _controller
+          .removeJavaScriptChannel(WebViewJsRunner.channelName)
+          .catchError((_) {}),
+    );
+  }
 }
 
 /// Hidden offscreen [WebViewController] runner implementing [BaseWebJsRunner].
 ///
-/// The WebView is created lazily on the first [resetContext] or
-/// [evaluateAsync] call, anchored to an empty HTML document on
-/// `https://www.youtube.com/robots.txt`, and never makes direct network
-/// requests.
+/// The WebView is created lazily on the first [resetContext], [ensureContext],
+/// or [evaluateAsync] call, anchored to an empty HTML document on
+/// `https://www.youtube.com/robots.txt`, and blocks frame navigations via
+/// [NavigationDelegate] (subresource fetch/XHR is not intercepted).
 class WebViewJsRunner extends BaseWebJsRunner {
   static const String channelName = 'YtExplodeJsRunner';
 
@@ -138,16 +149,38 @@ class WebViewJsRunner extends BaseWebJsRunner {
     return completer.future;
   }
 
+  Future<void> _resetContextUnlocked({
+    required Uri originUrl,
+    String htmlContent = '<!doctype html><title></title>',
+  }) async {
+    _originUrl = originUrl;
+    _contextGeneration++;
+    final adapter = _ensureAdapter(originUrl);
+    await adapter.loadHtml(htmlContent, baseUrl: originUrl).timeout(_timeout);
+  }
+
   @override
   Future<void> resetContext({
     required Uri originUrl,
     String htmlContent = '<!doctype html><title></title>',
   }) {
+    return _serialized(
+      () =>
+          _resetContextUnlocked(originUrl: originUrl, htmlContent: htmlContent),
+    );
+  }
+
+  @override
+  Future<void> ensureContext({
+    required Uri originUrl,
+    String htmlContent = '<!doctype html><title></title>',
+  }) {
     return _serialized(() async {
-      _originUrl = originUrl;
-      _contextGeneration++;
-      final adapter = _ensureAdapter(originUrl);
-      await adapter.loadHtml(htmlContent, baseUrl: originUrl).timeout(_timeout);
+      if (_contextGeneration > 0) return;
+      await _resetContextUnlocked(
+        originUrl: originUrl,
+        htmlContent: htmlContent,
+      );
     });
   }
 
@@ -155,11 +188,7 @@ class WebViewJsRunner extends BaseWebJsRunner {
   Future<String?> evaluateAsync(String jsCode) {
     return _serialized(() async {
       if (_contextGeneration == 0) {
-        _contextGeneration++;
-        final adapter = _ensureAdapter(_originUrl);
-        await adapter
-            .loadHtml('<!doctype html><title></title>', baseUrl: _originUrl)
-            .timeout(_timeout);
+        await _resetContextUnlocked(originUrl: _originUrl);
       }
       final adapter = _ensureAdapter(_originUrl);
       final id = _nextId++;
@@ -219,7 +248,12 @@ class WebViewJsRunner extends BaseWebJsRunner {
   /// Processes a raw JSON message posted by JS on [channelName].
   @visibleForTesting
   void handleChannelMessage(String rawMessage) {
-    final decoded = json.decode(rawMessage);
+    final Object? decoded;
+    try {
+      decoded = json.decode(rawMessage);
+    } catch (_) {
+      return;
+    }
     if (decoded is! Map<String, dynamic>) return;
     final id = decoded['id'];
     if (id is! int) return;

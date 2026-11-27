@@ -7,6 +7,7 @@ import 'package:test/test.dart';
 import 'package:youtube_explode_dart/js_challenge.dart';
 import 'package:youtube_explode_dart/src/reverse_engineering/pages/watch_page.dart';
 import 'package:youtube_explode_dart/src/reverse_engineering/sabr/proto_wire.dart';
+import 'package:youtube_explode_dart/src/reverse_engineering/sabr/sabr_proto_codec.dart';
 import 'package:youtube_explode_dart/src/reverse_engineering/sabr/ump_reader.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 
@@ -41,6 +42,7 @@ Uint8List _testUmpPart(int type, List<int> payload) {
       b.addByte(v >> 6);
     }
   }
+
   addVarint(type);
   addVarint(payload.length);
   b.add(payload);
@@ -765,7 +767,10 @@ ytcfg.set({"STS":20774,"EXTRA":"{ok}"});
         requireWatchPage: false,
       );
       expect(potProvider.calls, 0);
-      expect(visionManifest.audioOnly.single.url.queryParameters['pot'], isNull);
+      expect(
+        visionManifest.audioOnly.single.url.queryParameters['pot'],
+        isNull,
+      );
 
       // 2. TVHTML5_SIMPLY requires player + GVS PO tokens and aligned visitorData.
       final tvManifest = await yt.videos.streams.getManifest(
@@ -778,10 +783,7 @@ ytcfg.set({"STS":20774,"EXTRA":"{ok}"});
         playerBodies.last['serviceIntegrityDimensions']['poToken'],
         'sess-pot-1',
       );
-      expect(
-        playerBodies.last['context']['client']['visitorData'],
-        'vd-po-1',
-      );
+      expect(playerBodies.last['context']['client']['visitorData'], 'vd-po-1');
       expect(playerHeaders.last['X-Goog-Visitor-Id'], 'vd-po-1');
       expect(
         tvManifest.audioOnly.single.url.queryParameters['pot'],
@@ -827,8 +829,7 @@ ytcfg.set({"STS":20774,"EXTRA":"{ok}"});
                 },
               },
               'streamingData': {
-                'serverAbrStreamingUrl':
-                    'https://rr1.googlevideo.com/videoplayback?expire=9999999999',
+                'serverAbrStreamingUrl': 'https://rr1.googlevideo.com/videoplayback?expire=9999999999',
                 'adaptiveFormats': [
                   {
                     'itag': 251,
@@ -857,43 +858,57 @@ ytcfg.set({"STS":20774,"EXTRA":"{ok}"});
           );
         }
         if (req.url.host == 'rr1.googlevideo.com' && req.method == 'POST') {
-          final fmtInit = (ProtoWriter()
-                ..message(2, (f) => f..int32(1, 251)..int64(2, 1700000))
-                ..int64(3, 10000)
-                ..int32(4, 1))
-              .toBytes();
-          final initHdr = (ProtoWriter()
-                ..int32(1, 0)
-                ..string(2, 'abcdefghijk')
-                ..int32(3, 251)
-                ..int64(4, 1700000)
-                ..int64(6, 0)
-                ..boolField(8, true)
-                ..int32(9, 0)
-                ..int64(14, initBytes.length))
-              .toBytes();
-          final segHdr = (ProtoWriter()
-                ..int32(1, 1)
-                ..string(2, 'abcdefghijk')
-                ..int32(3, 251)
-                ..int64(4, 1700000)
-                ..int64(6, initBytes.length)
-                ..boolField(8, false)
-                ..int32(9, 1)
-                ..int64(11, 0)
-                ..int64(12, 10000)
-                ..int64(14, segBytes.length))
-              .toBytes();
-          final body = (BytesBuilder()
-                ..add(_testUmpPart(UmpPartType.formatInitializationMetadata, fmtInit))
-                ..add(_testUmpPart(UmpPartType.mediaHeader, initHdr))
-                ..add(_testUmpPart(UmpPartType.media, [0, ...initBytes]))
-                ..add(_testUmpPart(UmpPartType.mediaEnd, [0]))
-                ..add(_testUmpPart(UmpPartType.mediaHeader, segHdr))
-                ..add(_testUmpPart(UmpPartType.media, [1, ...segBytes]))
-                ..add(_testUmpPart(UmpPartType.mediaEnd, [1]))
-                ..add(_testUmpPart(UmpPartType.endOfTrack, [])))
-              .takeBytes();
+          final fmtInit =
+              (ProtoWriter()
+                    ..message(
+                      2,
+                      (f) => f
+                        ..int32(1, 251)
+                        ..int64(2, 1700000),
+                    )
+                    ..int64(3, 10000)
+                    ..int32(4, 1))
+                  .toBytes();
+          final initHdr =
+              (ProtoWriter()
+                    ..int32(1, 0)
+                    ..string(2, 'abcdefghijk')
+                    ..int32(3, 251)
+                    ..int64(4, 1700000)
+                    ..int64(6, 0)
+                    ..boolField(8, true)
+                    ..int32(9, 0)
+                    ..int64(14, initBytes.length))
+                  .toBytes();
+          final segHdr =
+              (ProtoWriter()
+                    ..int32(1, 1)
+                    ..string(2, 'abcdefghijk')
+                    ..int32(3, 251)
+                    ..int64(4, 1700000)
+                    ..int64(6, initBytes.length)
+                    ..boolField(8, false)
+                    ..int32(9, 1)
+                    ..int64(11, 0)
+                    ..int64(12, 10000)
+                    ..int64(14, segBytes.length))
+                  .toBytes();
+          final body =
+              (BytesBuilder()
+                    ..add(
+                      _testUmpPart(
+                        UmpPartType.formatInitializationMetadata,
+                        fmtInit,
+                      ),
+                    )
+                    ..add(_testUmpPart(UmpPartType.mediaHeader, initHdr))
+                    ..add(_testUmpPart(UmpPartType.media, [0, ...initBytes]))
+                    ..add(_testUmpPart(UmpPartType.mediaEnd, [0]))
+                    ..add(_testUmpPart(UmpPartType.mediaHeader, segHdr))
+                    ..add(_testUmpPart(UmpPartType.media, [1, ...segBytes]))
+                    ..add(_testUmpPart(UmpPartType.mediaEnd, [1]))
+                    ..add(_testUmpPart(UmpPartType.endOfTrack, [])))
+                  .takeBytes();
           return http.Response.bytes(
             body,
             200,
@@ -940,16 +955,13 @@ ytcfg.set({"STS":20774,"EXTRA":"{ok}"});
 <script>
 ytcfg.set({"EVENT_ID":"ev-1","VISITOR_DATA":"vd-remix","STS":20801});
 window.ytAtN(cb, {'R': ${jsonEncode(jsonEncode({
-                  'bgChallenge': {
-                    'interpreterUrl': {
-                      'privateDoNotAccessOrElseTrustedResourceUrlWrappedValue':
-                          'https://www.google.com/js/th/AbCdEfGhIjKlMnOpQrStUvWxYz123456.js',
-                    },
-                    'interpreterHash': 'hash123',
-                    'program': 'prog',
-                    'globalName': 'trayride',
-                  },
-                }))}});
+              'bgChallenge': {
+                'interpreterUrl': {'privateDoNotAccessOrElseTrustedResourceUrlWrappedValue': 'https://www.google.com/js/th/AbCdEfGhIjKlMnOpQrStUvWxYz123456.js'},
+                'interpreterHash': 'hash123',
+                'program': 'prog',
+                'globalName': 'trayride',
+              },
+            }))}});
 </script></head><body></body></html>
 ''',
             200,
@@ -975,13 +987,11 @@ window.ytAtN(cb, {'R': ${jsonEncode(jsonEncode({
                 },
               },
               'streamingData': {
-                'serverAbrStreamingUrl':
-                    'https://rr1.googlevideo.com/videoplayback?expire=9999999999',
+                'serverAbrStreamingUrl': 'https://rr1.googlevideo.com/videoplayback?expire=9999999999',
                 'adaptiveFormats': [
                   {
                     'itag': 251,
-                    'url':
-                        'https://cdn.example.com/videoplayback?itag=251',
+                    'url': 'https://cdn.example.com/videoplayback?itag=251',
                     'mimeType': 'audio/webm; codecs="opus"',
                     'bitrate': 128000,
                     'lastModified': '1700000',
@@ -991,8 +1001,7 @@ window.ytAtN(cb, {'R': ${jsonEncode(jsonEncode({
                   },
                   {
                     'itag': 137,
-                    'url':
-                        'https://cdn.example.com/videoplayback?itag=137',
+                    'url': 'https://cdn.example.com/videoplayback?itag=137',
                     'mimeType': 'video/mp4; codecs="avc1.640028"',
                     'bitrate': 2000000,
                     'width': 1920,
@@ -1028,6 +1037,122 @@ window.ytAtN(cb, {'R': ${jsonEncode(jsonEncode({
       expect(manifest.audioOnly, isEmpty);
       expect(manifest.videoOnly, isEmpty);
       expect(manifest.muxed, isEmpty);
+    });
+
+    test('SabrVideoStreamInfo assigns discard audioFormat instead of self video format', () async {
+      final mockClient = MockClient((req) async {
+        if (req.url.path == '/youtubei/v1/visitor_id') {
+          return http.Response(
+            jsonEncode({
+              'responseContext': {'visitorData': 'vd-sabr-vid'},
+            }),
+            200,
+            request: req,
+          );
+        }
+        if (req.url.path.endsWith('/youtubei/v1/player')) {
+          return http.Response(
+            jsonEncode({
+              'playabilityStatus': {'status': 'OK'},
+              'videoDetails': {
+                'videoId': 'abcdefghijk',
+                'title': 'Song',
+                'author': 'Artist',
+                'lengthSeconds': '10',
+                'channelId': 'UC123',
+              },
+              'playerConfig': {
+                'mediaCommonConfig': {
+                  'mediaUstreamerRequestConfig': {
+                    'videoPlaybackUstreamerConfig': base64Url.encode([1, 2, 3]),
+                  },
+                },
+              },
+              'streamingData': {
+                'serverAbrStreamingUrl': 'https://rr1.googlevideo.com/videoplayback?expire=9999999999',
+                'adaptiveFormats': [
+                  {
+                    'itag': 251,
+                    'mimeType': 'audio/webm; codecs="opus"',
+                    'bitrate': 128000,
+                    'lastModified': '1700000',
+                    'approxDurationMs': '10000',
+                    'contentLength': '1024',
+                    'qualityLabel': 'AUDIO_QUALITY_MEDIUM',
+                  },
+                  {
+                    'itag': 248,
+                    'mimeType': 'video/webm; codecs="vp9"',
+                    'bitrate': 1500000,
+                    'width': 1920,
+                    'height': 1080,
+                    'lastModified': '1700000',
+                    'approxDurationMs': '10000',
+                    'contentLength': '8192',
+                    'qualityLabel': '1080p',
+                  },
+                ],
+              },
+            }),
+            200,
+            request: req,
+          );
+        }
+        return http.Response('Not found', 404, request: req);
+      });
+
+      final yt = YoutubeExplode(httpClient: YoutubeHttpClient(mockClient));
+      addTearDown(yt.close);
+
+      final manifest = await yt.videos.streams.getManifest(
+        'abcdefghijk',
+        ytClients: const [YoutubeApiClient.visionosSabr],
+        requireWatchPage: false,
+      );
+
+      final videoStream = manifest.sabrVideo.single;
+      final bootstrap = videoStream.sabrBootstrap;
+      expect(bootstrap.selectedVideoFormat?.itag, 248);
+      expect(bootstrap.audioFormat.itag, 251);
+      expect(bootstrap.audioFormat, isNot(bootstrap.selectedVideoFormat));
+
+      final encoded = SabrProtoCodec.encodeRequest(
+        bootstrap: bootstrap,
+        playerTimeMs: 0,
+        initialized: false,
+        bufferedRanges: const [],
+        playbackCookie: null,
+        contexts: const [],
+        activeContextTypes: const {},
+        mediaType: SabrMediaType.video,
+      );
+      final reader = ProtoReader(encoded);
+      final discardItags = <int>[];
+      while (reader.hasRemaining) {
+        final tag = reader.tag();
+        if (tag.field == 3) {
+          final br = reader.slice();
+          while (br.hasRemaining) {
+            final btag = br.tag();
+            if (btag.field == 1) {
+              final fmt = br.slice();
+              while (fmt.hasRemaining) {
+                final ftag = fmt.tag();
+                if (ftag.field == 1) {
+                  discardItags.add(fmt.intValue());
+                } else {
+                  fmt.skip(ftag);
+                }
+              }
+            } else {
+              br.skip(btag);
+            }
+          }
+        } else {
+          reader.skip(tag);
+        }
+      }
+      expect(discardItags, equals([251]));
     });
   });
 }

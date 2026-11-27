@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
@@ -12,15 +13,22 @@ import 'package:youtube_explode_dart/src/reverse_engineering/youtube_http_client
 
 Uint8List _umpVarint(int value) {
   if (value < 0x80) return Uint8List.fromList([value]);
-  if (value < 0x4000) return Uint8List.fromList([(value & 0x3f) | 0x80, value >> 6]);
-  return Uint8List.fromList([(value & 0x1f) | 0xc0, (value >> 5) & 0xff, (value >> 13) & 0xff]);
+  if (value < 0x4000) {
+    return Uint8List.fromList([(value & 0x3f) | 0x80, value >> 6]);
+  }
+  return Uint8List.fromList([
+    (value & 0x1f) | 0xc0,
+    (value >> 5) & 0xff,
+    (value >> 13) & 0xff,
+  ]);
 }
 
-Uint8List _part(int type, List<int> payload) => (BytesBuilder()
-      ..add(_umpVarint(type))
-      ..add(_umpVarint(payload.length))
-      ..add(payload))
-    .takeBytes();
+Uint8List _part(int type, List<int> payload) =>
+    (BytesBuilder()
+          ..add(_umpVarint(type))
+          ..add(_umpVarint(payload.length))
+          ..add(payload))
+        .takeBytes();
 
 Uint8List _mediaHeader({
   required int headerId,
@@ -75,26 +83,35 @@ void main() {
         hostsSeen.add(req.url.host);
         callIndex++;
         if (callIndex == 1) {
-          final redir = (ProtoWriter()
-                ..string(1, 'https://rr2.googlevideo.com/videoplayback?id=1'))
-              .toBytes();
+          final redir =
+              (ProtoWriter()..string(
+                    1,
+                    'https://rr2.googlevideo.com/videoplayback?id=1',
+                  ))
+                  .toBytes();
           final cookie = (ProtoWriter()..bytes(7, [9, 9])).toBytes();
-          final body = (BytesBuilder()
-                ..add(_part(UmpPartType.sabrRedirect, redir))
-                ..add(_part(UmpPartType.nextRequestPolicy, cookie))
-                ..add(_part(UmpPartType.mediaHeader, _mediaHeader(
-                  headerId: 0,
-                  itag: 251,
-                  startRange: 0,
-                  isInit: true,
-                  seq: 0,
-                  startMs: 0,
-                  durationMs: 0,
-                  contentLength: initBytes.length,
-                )))
-                ..add(_part(UmpPartType.media, [0, ...initBytes]))
-                ..add(_part(UmpPartType.mediaEnd, [0])))
-              .takeBytes();
+          final body =
+              (BytesBuilder()
+                    ..add(_part(UmpPartType.sabrRedirect, redir))
+                    ..add(_part(UmpPartType.nextRequestPolicy, cookie))
+                    ..add(
+                      _part(
+                        UmpPartType.mediaHeader,
+                        _mediaHeader(
+                          headerId: 0,
+                          itag: 251,
+                          startRange: 0,
+                          isInit: true,
+                          seq: 0,
+                          startMs: 0,
+                          durationMs: 0,
+                          contentLength: initBytes.length,
+                        ),
+                      ),
+                    )
+                    ..add(_part(UmpPartType.media, [0, ...initBytes]))
+                    ..add(_part(UmpPartType.mediaEnd, [0])))
+                  .takeBytes();
           return http.Response.bytes(
             body,
             200,
@@ -103,40 +120,59 @@ void main() {
           );
         }
 
-        final fmtInit = (ProtoWriter()
-              ..message(2, (f) => f..int32(1, 251)..int64(2, 1700000))
-              ..int64(3, 10000)
-              ..int32(4, 2))
-            .toBytes();
+        final fmtInit =
+            (ProtoWriter()
+                  ..message(
+                    2,
+                    (f) => f
+                      ..int32(1, 251)
+                      ..int64(2, 1700000),
+                  )
+                  ..int64(3, 10000)
+                  ..int32(4, 2))
+                .toBytes();
         // Send segment 2 before segment 1 to verify sequence reordering!
-        final body = (BytesBuilder()
-              ..add(_part(UmpPartType.formatInitializationMetadata, fmtInit))
-              ..add(_part(UmpPartType.mediaHeader, _mediaHeader(
-                headerId: 2,
-                itag: 251,
-                startRange: 9,
-                isInit: false,
-                seq: 2,
-                startMs: 5000,
-                durationMs: 5000,
-                contentLength: seg2Bytes.length,
-              )))
-              ..add(_part(UmpPartType.media, [2, ...seg2Bytes]))
-              ..add(_part(UmpPartType.mediaEnd, [2]))
-              ..add(_part(UmpPartType.mediaHeader, _mediaHeader(
-                headerId: 1,
-                itag: 251,
-                startRange: 4,
-                isInit: false,
-                seq: 1,
-                startMs: 0,
-                durationMs: 5000,
-                contentLength: seg1Bytes.length,
-              )))
-              ..add(_part(UmpPartType.media, [1, ...seg1Bytes]))
-              ..add(_part(UmpPartType.mediaEnd, [1]))
-              ..add(_part(UmpPartType.endOfTrack, [])))
-            .takeBytes();
+        final body =
+            (BytesBuilder()
+                  ..add(
+                    _part(UmpPartType.formatInitializationMetadata, fmtInit),
+                  )
+                  ..add(
+                    _part(
+                      UmpPartType.mediaHeader,
+                      _mediaHeader(
+                        headerId: 2,
+                        itag: 251,
+                        startRange: 9,
+                        isInit: false,
+                        seq: 2,
+                        startMs: 5000,
+                        durationMs: 5000,
+                        contentLength: seg2Bytes.length,
+                      ),
+                    ),
+                  )
+                  ..add(_part(UmpPartType.media, [2, ...seg2Bytes]))
+                  ..add(_part(UmpPartType.mediaEnd, [2]))
+                  ..add(
+                    _part(
+                      UmpPartType.mediaHeader,
+                      _mediaHeader(
+                        headerId: 1,
+                        itag: 251,
+                        startRange: 4,
+                        isInit: false,
+                        seq: 1,
+                        startMs: 0,
+                        durationMs: 5000,
+                        contentLength: seg1Bytes.length,
+                      ),
+                    ),
+                  )
+                  ..add(_part(UmpPartType.media, [1, ...seg1Bytes]))
+                  ..add(_part(UmpPartType.mediaEnd, [1]))
+                  ..add(_part(UmpPartType.endOfTrack, [])))
+                .takeBytes();
         return http.Response.bytes(
           body,
           200,
@@ -151,7 +187,8 @@ void main() {
       final chunks = await SabrStream(
         httpClient: httpClient,
         bootstrap: makeBootstrap(
-          contentLengthBytes: initBytes.length + seg1Bytes.length + seg2Bytes.length,
+          contentLengthBytes:
+              initBytes.length + seg1Bytes.length + seg2Bytes.length,
         ),
         retryDelay: (_) async {},
       ).chunks().toList();
@@ -163,78 +200,100 @@ void main() {
       expect(chunks[2].startRange, 9);
     });
 
-    test('triggers lateTokenSupplier on StreamProtectionStatus = 3 and retries', () async {
-      var requests = 0;
-      final initBytes = Uint8List.fromList([1, 2]);
-      final segBytes = Uint8List.fromList([3, 4, 5]);
+    test(
+      'triggers lateTokenSupplier on StreamProtectionStatus = 3 and retries',
+      () async {
+        var requests = 0;
+        final initBytes = Uint8List.fromList([1, 2]);
+        final segBytes = Uint8List.fromList([3, 4, 5]);
 
-      final mockClient = MockClient((req) async {
-        requests++;
-        if (requests == 1) {
-          final sps = (ProtoWriter()..int32(1, 3)).toBytes();
+        final mockClient = MockClient((req) async {
+          requests++;
+          if (requests == 1) {
+            final sps = (ProtoWriter()..int32(1, 3)).toBytes();
+            return http.Response.bytes(
+              _part(UmpPartType.streamProtectionStatus, sps),
+              200,
+              headers: {'content-type': 'application/vnd.yt-ump'},
+              request: req,
+            );
+          }
+          // Verify request 2 includes the late PO token bytes!
+          expect(req.bodyBytes, isNotEmpty);
+          final fmtInit =
+              (ProtoWriter()
+                    ..message(
+                      2,
+                      (f) => f
+                        ..int32(1, 251)
+                        ..int64(2, 1700000),
+                    )
+                    ..int64(3, 10000)
+                    ..int32(4, 1))
+                  .toBytes();
+          final body =
+              (BytesBuilder()
+                    ..add(
+                      _part(UmpPartType.formatInitializationMetadata, fmtInit),
+                    )
+                    ..add(
+                      _part(
+                        UmpPartType.mediaHeader,
+                        _mediaHeader(
+                          headerId: 0,
+                          itag: 251,
+                          startRange: 0,
+                          isInit: true,
+                          seq: 0,
+                          startMs: 0,
+                          durationMs: 0,
+                          contentLength: initBytes.length,
+                        ),
+                      ),
+                    )
+                    ..add(_part(UmpPartType.media, [0, ...initBytes]))
+                    ..add(_part(UmpPartType.mediaEnd, [0]))
+                    ..add(
+                      _part(
+                        UmpPartType.mediaHeader,
+                        _mediaHeader(
+                          headerId: 1,
+                          itag: 251,
+                          startRange: 2,
+                          isInit: false,
+                          seq: 1,
+                          startMs: 0,
+                          durationMs: 10000,
+                          contentLength: segBytes.length,
+                        ),
+                      ),
+                    )
+                    ..add(_part(UmpPartType.media, [1, ...segBytes]))
+                    ..add(_part(UmpPartType.mediaEnd, [1]))
+                    ..add(_part(UmpPartType.endOfTrack, [])))
+                  .takeBytes();
           return http.Response.bytes(
-            _part(UmpPartType.streamProtectionStatus, sps),
+            body,
             200,
             headers: {'content-type': 'application/vnd.yt-ump'},
             request: req,
           );
-        }
-        // Verify request 2 includes the late PO token bytes!
-        expect(req.bodyBytes, isNotEmpty);
-        final fmtInit = (ProtoWriter()
-              ..message(2, (f) => f..int32(1, 251)..int64(2, 1700000))
-              ..int64(3, 10000)
-              ..int32(4, 1))
-            .toBytes();
-        final body = (BytesBuilder()
-              ..add(_part(UmpPartType.formatInitializationMetadata, fmtInit))
-              ..add(_part(UmpPartType.mediaHeader, _mediaHeader(
-                headerId: 0,
-                itag: 251,
-                startRange: 0,
-                isInit: true,
-                seq: 0,
-                startMs: 0,
-                durationMs: 0,
-                contentLength: initBytes.length,
-              )))
-              ..add(_part(UmpPartType.media, [0, ...initBytes]))
-              ..add(_part(UmpPartType.mediaEnd, [0]))
-              ..add(_part(UmpPartType.mediaHeader, _mediaHeader(
-                headerId: 1,
-                itag: 251,
-                startRange: 2,
-                isInit: false,
-                seq: 1,
-                startMs: 0,
-                durationMs: 10000,
-                contentLength: segBytes.length,
-              )))
-              ..add(_part(UmpPartType.media, [1, ...segBytes]))
-              ..add(_part(UmpPartType.mediaEnd, [1]))
-              ..add(_part(UmpPartType.endOfTrack, [])))
-            .takeBytes();
-        return http.Response.bytes(
-          body,
-          200,
-          headers: {'content-type': 'application/vnd.yt-ump'},
-          request: req,
-        );
-      });
+        });
 
-      final httpClient = YoutubeHttpClient(mockClient);
-      addTearDown(httpClient.close);
+        final httpClient = YoutubeHttpClient(mockClient);
+        addTearDown(httpClient.close);
 
-      final bytes = await SabrStream(
-        httpClient: httpClient,
-        bootstrap: makeBootstrap(),
-        lateTokenSupplier: () async => Uint8List.fromList([99, 100, 101]),
-        retryDelay: (_) async {},
-      ).bytes().expand((e) => e).toList();
+        final bytes = await SabrStream(
+          httpClient: httpClient,
+          bootstrap: makeBootstrap(),
+          lateTokenSupplier: () async => Uint8List.fromList([99, 100, 101]),
+          retryDelay: (_) async {},
+        ).bytes().expand((e) => e).toList();
 
-      expect(requests, 2);
-      expect(bytes, orderedEquals([1, 2, 3, 4, 5]));
-    });
+        expect(requests, 2);
+        expect(bytes, orderedEquals([1, 2, 3, 4, 5]));
+      },
+    );
 
     test('throws SabrProtocolException(attestationRequired) when SPS=3 and no token', () async {
       final mockClient = MockClient((req) async {
@@ -261,6 +320,243 @@ void main() {
             (e) => e.kind,
             'kind',
             SabrFailureKind.attestationRequired,
+          ),
+        ),
+      );
+    });
+
+    test('cancelling mid-response completes without hanging', () async {
+      final bodyController = StreamController<List<int>>();
+      final mockClient = MockClient.streaming((req, _) async {
+        return http.StreamedResponse(
+          bodyController.stream,
+          200,
+          headers: {'content-type': 'application/vnd.yt-ump'},
+          request: req,
+        );
+      });
+
+      final httpClient = YoutubeHttpClient(mockClient);
+      addTearDown(httpClient.close);
+
+      final initBytes = Uint8List.fromList([1, 2, 3]);
+      final sub = SabrStream(
+        httpClient: httpClient,
+        bootstrap: makeBootstrap(),
+        retryDelay: (_) async {},
+      ).chunks().listen((_) {});
+
+      final partial =
+          (BytesBuilder()
+                ..add(
+                  _part(
+                    UmpPartType.mediaHeader,
+                    _mediaHeader(
+                      headerId: 0,
+                      itag: 251,
+                      startRange: 0,
+                      isInit: true,
+                      seq: 0,
+                      startMs: 0,
+                      durationMs: 0,
+                      contentLength: initBytes.length,
+                    ),
+                  ),
+                )
+                ..add(_part(UmpPartType.media, [0, ...initBytes]))
+                ..add(_part(UmpPartType.mediaEnd, [0])))
+              .takeBytes();
+      bodyController.add(partial);
+      await Future<void>.delayed(Duration.zero);
+
+      await sub.cancel().timeout(const Duration(seconds: 2));
+      await bodyController.close();
+    });
+
+    test(
+      'pausing subscription pauses subsequent SABR POSTs until resumed',
+      () async {
+        var requests = 0;
+        final initBytes = Uint8List.fromList([1, 2]);
+        final seg1Bytes = Uint8List.fromList([3, 4]);
+        final seg2Bytes = Uint8List.fromList([5, 6]);
+
+        final mockClient = MockClient((req) async {
+          requests++;
+          if (requests == 1) {
+            final body =
+                (BytesBuilder()
+                      ..add(
+                        _part(
+                          UmpPartType.mediaHeader,
+                          _mediaHeader(
+                            headerId: 0,
+                            itag: 251,
+                            startRange: 0,
+                            isInit: true,
+                            seq: 0,
+                            startMs: 0,
+                            durationMs: 0,
+                            contentLength: initBytes.length,
+                          ),
+                        ),
+                      )
+                      ..add(_part(UmpPartType.media, [0, ...initBytes]))
+                      ..add(_part(UmpPartType.mediaEnd, [0])))
+                    .takeBytes();
+            return http.Response.bytes(
+              body,
+              200,
+              headers: {'content-type': 'application/vnd.yt-ump'},
+              request: req,
+            );
+          }
+          if (requests == 2) {
+            final body =
+                (BytesBuilder()
+                      ..add(
+                        _part(
+                          UmpPartType.mediaHeader,
+                          _mediaHeader(
+                            headerId: 1,
+                            itag: 251,
+                            startRange: 2,
+                            isInit: false,
+                            seq: 1,
+                            startMs: 0,
+                            durationMs: 5000,
+                            contentLength: seg1Bytes.length,
+                          ),
+                        ),
+                      )
+                      ..add(_part(UmpPartType.media, [1, ...seg1Bytes]))
+                      ..add(_part(UmpPartType.mediaEnd, [1])))
+                    .takeBytes();
+            return http.Response.bytes(
+              body,
+              200,
+              headers: {'content-type': 'application/vnd.yt-ump'},
+              request: req,
+            );
+          }
+          final body =
+              (BytesBuilder()
+                    ..add(
+                      _part(
+                        UmpPartType.mediaHeader,
+                        _mediaHeader(
+                          headerId: 2,
+                          itag: 251,
+                          startRange: 4,
+                          isInit: false,
+                          seq: 2,
+                          startMs: 5000,
+                          durationMs: 5000,
+                          contentLength: seg2Bytes.length,
+                        ),
+                      ),
+                    )
+                    ..add(_part(UmpPartType.media, [2, ...seg2Bytes]))
+                    ..add(_part(UmpPartType.mediaEnd, [2]))
+                    ..add(_part(UmpPartType.endOfTrack, [])))
+                  .takeBytes();
+          return http.Response.bytes(
+            body,
+            200,
+            headers: {'content-type': 'application/vnd.yt-ump'},
+            request: req,
+          );
+        });
+
+        final httpClient = YoutubeHttpClient(mockClient);
+        addTearDown(httpClient.close);
+
+        final received = <SabrChunk>[];
+        final done = Completer<void>();
+        late final StreamSubscription<SabrChunk> sub;
+        sub =
+            SabrStream(
+              httpClient: httpClient,
+              bootstrap: makeBootstrap(),
+              retryDelay: (_) async {},
+            ).chunks().listen(
+              (chunk) {
+                received.add(chunk);
+                if (chunk.isInitialization) {
+                  sub.pause();
+                }
+              },
+              onDone: done.complete,
+              onError: done.completeError,
+            );
+
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect(requests, 1);
+        expect(received, hasLength(1));
+
+        sub.resume();
+        await done.future;
+        expect(requests, 3);
+        expect(received, hasLength(3));
+      },
+    );
+
+    test('reports SabrFailureKind.network on transient failures and preserves HTTP status', () async {
+      final client503 = YoutubeHttpClient(
+        MockClient(
+          (req) async => http.Response('unavailable', 503, request: req),
+        ),
+      );
+      addTearDown(client503.close);
+      await expectLater(
+        SabrStream(
+          httpClient: client503,
+          bootstrap: makeBootstrap(),
+          retryDelay: (_) async {},
+        ).bytes().drain<void>(),
+        throwsA(
+          isA<SabrProtocolException>()
+              .having((e) => e.kind, 'kind', SabrFailureKind.network)
+              .having((e) => e.httpStatusCode, 'httpStatusCode', 503),
+        ),
+      );
+
+      final client429 = YoutubeHttpClient(
+        MockClient(
+          (req) async => http.Response('rate limit', 429, request: req),
+        ),
+      );
+      addTearDown(client429.close);
+      await expectLater(
+        SabrStream(
+          httpClient: client429,
+          bootstrap: makeBootstrap(),
+          retryDelay: (_) async {},
+        ).bytes().drain<void>(),
+        throwsA(
+          isA<SabrProtocolException>()
+              .having((e) => e.kind, 'kind', SabrFailureKind.network)
+              .having((e) => e.httpStatusCode, 'httpStatusCode', 429),
+        ),
+      );
+
+      final clientIoErr = YoutubeHttpClient(
+        MockClient(
+          (req) async => throw http.ClientException('socket reset', req.url),
+        ),
+      );
+      addTearDown(clientIoErr.close);
+      await expectLater(
+        SabrStream(
+          httpClient: clientIoErr,
+          bootstrap: makeBootstrap(),
+          retryDelay: (_) async {},
+        ).bytes().drain<void>(),
+        throwsA(
+          isA<SabrProtocolException>().having(
+            (e) => e.kind,
+            'kind',
+            SabrFailureKind.network,
           ),
         ),
       );

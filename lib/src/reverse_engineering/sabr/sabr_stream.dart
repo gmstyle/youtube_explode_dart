@@ -42,7 +42,15 @@ class SabrStream {
   static const int _maxTransientRetries = 2;
   static const int _retryBaseDelayMs = 250;
   static const int _retryMaxDelayMs = 5000;
-  static const Set<int> _transientHttpStatuses = {408, 425, 429, 500, 502, 503, 504};
+  static const Set<int> _transientHttpStatuses = {
+    408,
+    425,
+    429,
+    500,
+    502,
+    503,
+    504,
+  };
 
   final YoutubeHttpClient httpClient;
   final SabrBootstrap bootstrap;
@@ -81,6 +89,8 @@ class SabrStream {
   Stream<SabrChunk> chunks() {
     late StreamController<SabrChunk> controller;
     var cancelled = false;
+    final cancelSignal = Completer<void>();
+    Completer<void>? resumeCompleter;
     StreamSubscription<List<int>>? activeResponseSub;
 
     controller = StreamController<SabrChunk>(
@@ -92,6 +102,8 @@ class SabrStream {
             }
           },
           isCancelled: () => cancelled || httpClient.closed,
+          cancelFuture: cancelSignal.future,
+          waitIfPaused: () => resumeCompleter?.future ?? Future<void>.value(),
           registerActiveSub: (sub) {
             activeResponseSub = sub;
           },
@@ -107,18 +119,43 @@ class SabrStream {
           },
         );
       },
+      onPause: () {
+        resumeCompleter ??= Completer<void>();
+      },
+      onResume: () {
+        final c = resumeCompleter;
+        resumeCompleter = null;
+        if (c != null && !c.isCompleted) {
+          c.complete();
+        }
+      },
       onCancel: () async {
         cancelled = true;
+        if (!cancelSignal.isCompleted) {
+          cancelSignal.complete();
+        }
+        final c = resumeCompleter;
+        resumeCompleter = null;
+        if (c != null && !c.isCompleted) {
+          c.complete();
+        }
         await activeResponseSub?.cancel();
       },
     );
     return controller.stream;
   }
 
+  Future<void> _delayOrCancel(Duration delay, Future<void> cancelFuture) {
+    return Future.any<void>([_retryDelay(delay), cancelFuture]);
+  }
+
   Future<void> _run({
     required void Function(SabrChunk chunk) emit,
     required bool Function() isCancelled,
-    required void Function(StreamSubscription<List<int>>? sub) registerActiveSub,
+    required Future<void> cancelFuture,
+    required Future<void> Function() waitIfPaused,
+    required void Function(StreamSubscription<List<int>>? sub)
+    registerActiveSub,
   }) async {
     Future<Uint8List?>? pendingTokenFuture;
     if (bootstrap.poToken == null && lateTokenSupplier != null) {
@@ -178,6 +215,8 @@ class SabrStream {
                     lastSequenceNumber == null ||
                     lastSequenceNumber! < initialization!.endSegmentNumber!) &&
                 playerTimeMs < expectedDurationMs()))) {
+      await waitIfPaused();
+      if (isCancelled()) return;
       retryWithToken = false;
 
       if (poToken == null &&
@@ -200,6 +239,7 @@ class SabrStream {
             maxTimeSinceLastRequestMs,
           ),
           isCancelled: isCancelled,
+          cancelFuture: cancelFuture,
         );
       }
       if (isCancelled()) return;
@@ -213,7 +253,7 @@ class SabrStream {
             ? math.min(backoff, remaining)
             : backoff;
         if (waitMs > 0) {
-          await _retryDelay(Duration(milliseconds: waitMs));
+          await _delayOrCancel(Duration(milliseconds: waitMs), cancelFuture);
         }
       }
       if (isCancelled()) return;
@@ -248,7 +288,36 @@ class SabrStream {
         req.headers['Referer'] = '${bootstrap.requestOrigin!}/';
       }
 
-      final response = await httpClient.send(req);
+      final http.StreamedResponse response;
+      try {
+        response = await httpClient.send(req);
+      } on http.ClientException catch (e) {
+        if (isCancelled()) return;
+        if (consecutiveTransientFailures < _maxTransientRetries) {
+          consecutiveTransientFailures++;
+          final delayMs =
+              _retryBaseDelayMs << (consecutiveTransientFailures - 1);
+          await _delayOrCancel(Duration(milliseconds: delayMs), cancelFuture);
+          continue;
+        }
+        throw SabrProtocolException(
+          'SABR network error: $e',
+          kind: SabrFailureKind.network,
+        );
+      } on TimeoutException catch (e) {
+        if (isCancelled()) return;
+        if (consecutiveTransientFailures < _maxTransientRetries) {
+          consecutiveTransientFailures++;
+          final delayMs =
+              _retryBaseDelayMs << (consecutiveTransientFailures - 1);
+          await _delayOrCancel(Duration(milliseconds: delayMs), cancelFuture);
+          continue;
+        }
+        throw SabrProtocolException(
+          'SABR network error: $e',
+          kind: SabrFailureKind.network,
+        );
+      }
       if (response.statusCode >= 300 && response.statusCode < 400) {
         await response.stream.drain<void>();
         throw SabrProtocolException(
@@ -266,16 +335,22 @@ class SabrStream {
             response.headers['retry-after'] ?? '',
           );
           final delayMs = retryAfterSec != null
-              ? (retryAfterSec * 1000).clamp(_retryBaseDelayMs, _retryMaxDelayMs)
+              ? (retryAfterSec * 1000).clamp(
+                  _retryBaseDelayMs,
+                  _retryMaxDelayMs,
+                )
               : (_retryBaseDelayMs << (consecutiveTransientFailures - 1));
-          await _retryDelay(Duration(milliseconds: delayMs));
+          await _delayOrCancel(Duration(milliseconds: delayMs), cancelFuture);
           continue;
         }
+        final failureKind = response.statusCode == 403
+            ? SabrFailureKind.attestationRequired
+            : (_transientHttpStatuses.contains(response.statusCode)
+                  ? SabrFailureKind.network
+                  : SabrFailureKind.protocol);
         throw SabrProtocolException(
           'SABR request failed with HTTP ${response.statusCode}',
-          kind: response.statusCode == 403
-              ? SabrFailureKind.attestationRequired
-              : SabrFailureKind.protocol,
+          kind: failureKind,
           httpStatusCode: response.statusCode,
         );
       }
@@ -348,7 +423,8 @@ class SabrStream {
           } else if (pendingMediaBySequence.containsKey(0) &&
               (requestPlayerTimeMs <= 0 || establishFromMinimum)) {
             firstSeq = 0;
-          } else if (establishFromMinimum && pendingMediaBySequence.isNotEmpty) {
+          } else if (establishFromMinimum &&
+              pendingMediaBySequence.isNotEmpty) {
             firstSeq = pendingMediaBySequence.keys.reduce(math.min);
           } else {
             firstSeq = null;
@@ -366,7 +442,9 @@ class SabrStream {
       }
 
       int? initialSeekSequence() {
-        if (firstSequenceNumber != null || requestPlayerTimeMs <= 0) return null;
+        if (firstSequenceNumber != null || requestPlayerTimeMs <= 0) {
+          return null;
+        }
         for (final seg in pendingMediaBySequence.values) {
           if (seg.header.startMs - requestPlayerTimeMs <=
                   _startTimeToleranceMs &&
@@ -507,16 +585,17 @@ class SabrStream {
                 'SABR active context count exceeded the memory limit',
               );
             }
-          case SabrStreamProtectionStatusEvent(:final status, :final maxRetries):
+          case SabrStreamProtectionStatusEvent(
+            :final status,
+            :final maxRetries,
+          ):
             responseProtectionStatus = status;
             responseProtectionMaxRetries = maxRetries >= 0 ? maxRetries : null;
             if (status >= _protectionRequired) {
               terminalProtection = true;
             }
           case SabrErrorEvent(:final type, :final code):
-            throw SabrProtocolException(
-              'SABR error ${type ?? ''} ($code)',
-            );
+            throw SabrProtocolException('SABR error ${type ?? ''} ($code)');
           case SabrReloadPlayerResponseEvent():
             throw SabrProtocolException(
               'SABR requested a fresh player response',
@@ -562,7 +641,19 @@ class SabrStream {
           }
         },
         onError: (Object e, StackTrace s) {
-          if (!bodyDone.isCompleted) bodyDone.completeError(e, s);
+          if (!bodyDone.isCompleted) {
+            if (e is http.ClientException || e is TimeoutException) {
+              bodyDone.completeError(
+                SabrProtocolException(
+                  'SABR network error: $e',
+                  kind: SabrFailureKind.network,
+                ),
+                s,
+              );
+            } else {
+              bodyDone.completeError(e, s);
+            }
+          }
         },
         onDone: () {
           if (!bodyDone.isCompleted) bodyDone.complete();
@@ -570,6 +661,12 @@ class SabrStream {
         cancelOnError: true,
       );
       registerActiveSub(sub);
+      unawaited(
+        cancelFuture.then((_) {
+          sub.cancel();
+          if (!bodyDone.isCompleted) bodyDone.complete();
+        }),
+      );
 
       await bodyDone.future;
       registerActiveSub(null);
@@ -597,7 +694,10 @@ class SabrStream {
           SabrBufferedRange(
             formatId: _selectedFormat,
             startTimeMs: first.startMs,
-            durationMs: math.max(0, last.startMs + last.durationMs - first.startMs),
+            durationMs: math.max(
+              0,
+              last.startMs + last.durationMs - first.startMs,
+            ),
             startSegmentIndex: first.sequenceNumber,
             endSegmentIndex: last.sequenceNumber,
           ),
@@ -665,13 +765,15 @@ class SabrStream {
         final playbackPos = playbackPositionMs?.call();
         final safePos = playbackPos != null ? math.max(0, playbackPos) : null;
         final hasSafeReadahead =
-            safePos != null && (playerTimeMs - safePos) > _starvationToleranceMs;
+            safePos != null &&
+            (playerTimeMs - safePos) > _starvationToleranceMs;
         if (hasSafeReadahead) {
           requestsWithoutProgress = 0;
           await _awaitPlaybackProgress(
             safePos,
             _heartbeatDeadline(lastRequestStarted, maxTimeSinceLastRequestMs),
             isCancelled,
+            cancelFuture,
           );
         } else if (++requestsWithoutProgress >= maxRequestsWithoutProgress) {
           throw SabrProtocolException(
@@ -706,9 +808,7 @@ class SabrStream {
       final token = await supplier().timeout(
         const Duration(milliseconds: _lateTokenTimeoutMs),
       );
-      if (token == null ||
-          token.isEmpty ||
-          token.length > _maxPoTokenBytes) {
+      if (token == null || token.isEmpty || token.length > _maxPoTokenBytes) {
         return null;
       }
       return token;
@@ -774,14 +874,16 @@ class SabrStream {
     int previousPositionMs,
     DateTime deadline,
     bool Function() isCancelled,
+    Future<void> cancelFuture,
   ) async {
     while (!isCancelled()) {
       final current = playbackPositionMs?.call();
       if (current == null || math.max(0, current) != previousPositionMs) return;
       final remaining = _remainingWaitMs(deadline);
       if (remaining == 0) return;
-      await _retryDelay(
+      await _delayOrCancel(
         Duration(milliseconds: math.min(_playbackPollIntervalMs, remaining)),
+        cancelFuture,
       );
     }
   }
@@ -791,6 +893,7 @@ class SabrStream {
     required int targetAudioReadaheadMs,
     required DateTime deadline,
     required bool Function() isCancelled,
+    required Future<void> cancelFuture,
   }) async {
     while (!isCancelled()) {
       final current = playbackPositionMs?.call();
@@ -803,7 +906,10 @@ class SabrStream {
       final pollMs = excessMs
           .clamp(_playbackPollIntervalMs, _maxReadaheadPollIntervalMs)
           .toInt();
-      await _retryDelay(Duration(milliseconds: math.min(pollMs, remaining)));
+      await _delayOrCancel(
+        Duration(milliseconds: math.min(pollMs, remaining)),
+        cancelFuture,
+      );
     }
   }
 

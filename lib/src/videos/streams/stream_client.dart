@@ -381,9 +381,9 @@ class StreamClient {
     final sabrNeedsNDecipher =
         _jsChallengeSolver != null &&
         playerResponse.hasSabrStreaming &&
-        (Uri.tryParse(
-              playerResponse.serverAbrStreamingUrl ?? '',
-            )?.queryParameters.containsKey('n') ??
+        (Uri.tryParse(playerResponse.serverAbrStreamingUrl ?? '')
+                ?.queryParameters
+                .containsKey('n') ??
             false);
     if (watchPage == null && (hasCipheredStreams || sabrNeedsNDecipher)) {
       watchPage = await WatchPage.get(_httpClient, videoId.value);
@@ -427,10 +427,15 @@ class StreamClient {
         : const <String, String>{};
     onHlsManifest?.call(playerResponse.hlsManifestUrl);
 
+    final hasDirectStreams =
+        playerResponse.streams.any((s) => s.url.isNotEmpty) ||
+        !playerResponse.dashManifestUrl.isNullOrWhiteSpace ||
+        !playerResponse.hlsManifestUrl.isNullOrWhiteSpace;
+
     if (playerResponse.hasSabrStreaming) {
       if (poTokenFuture != null &&
           poTokenResult == null &&
-          !policy.sabrAllowsLateToken) {
+          (!policy.sabrAllowsLateToken || hasDirectStreams)) {
         poTokenResult = await poTokenFuture;
       }
       yield* _parseSabrStreams(
@@ -443,10 +448,6 @@ class StreamClient {
       );
     }
 
-    final hasDirectStreams =
-        playerResponse.streams.any((s) => s.url.isNotEmpty) ||
-        !playerResponse.dashManifestUrl.isNullOrWhiteSpace ||
-        !playerResponse.hlsManifestUrl.isNullOrWhiteSpace;
     if (hasDirectStreams && poTokenFuture != null && poTokenResult == null) {
       poTokenResult = await poTokenFuture;
     }
@@ -552,6 +553,23 @@ class StreamClient {
       return;
     }
 
+    final discardAudio = playerResponse.adaptiveStreams
+        .where(
+          (s) =>
+              s.videoCodec.isNullOrWhiteSpace &&
+              !s.audioCodec.isNullOrWhiteSpace &&
+              (s.lastModified ?? 0) > 0,
+        )
+        .sorted((a, b) => (a.bitrate ?? 0).compareTo(b.bitrate ?? 0))
+        .firstOrNull;
+    final discardAudioFormatId = discardAudio != null
+        ? SabrFormatId(
+            discardAudio.tag,
+            lastModified: discardAudio.lastModified ?? 0,
+            xtags: discardAudio.xtags,
+          )
+        : null;
+
     final clientMap =
         (ytClient.payload['context'] as Map<String, dynamic>)['client']
             as Map<String, dynamic>;
@@ -585,8 +603,8 @@ class StreamClient {
     for (final stream in playerResponse.adaptiveStreams) {
       final lmt = stream.lastModified;
       if (stream.tag <= 0 || lmt == null || lmt <= 0) continue;
-      final durationMs = (stream.approxDurationMs != null &&
-              stream.approxDurationMs! > 0)
+      final durationMs =
+          (stream.approxDurationMs != null && stream.approxDurationMs! > 0)
           ? stream.approxDurationMs!
           : fallbackDurationMs;
       if (durationMs <= 0) continue;
@@ -618,6 +636,7 @@ class StreamClient {
       final audioCodec = stream.audioCodec;
 
       if (!videoCodec.isNullOrWhiteSpace) {
+        if (discardAudioFormatId == null) continue;
         final framerate = Framerate(stream.framerate ?? 24);
         final videoQuality = VideoQualityUtil.fromLabel(stream.qualityLabel);
         final w = stream.videoWidth;
@@ -632,7 +651,7 @@ class StreamClient {
           videoPlaybackUstreamerConfig: ustreamerBytes,
           clientNameId: clientNameId,
           clientVersion: clientVersion,
-          audioFormat: formatId,
+          audioFormat: discardAudioFormatId,
           discardVideoFormat: discardFormatId,
           discardVideoHeight: discardHeight,
           selectedVideoFormat: formatId,

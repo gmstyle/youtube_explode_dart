@@ -245,7 +245,7 @@ class YoutubeHttpClient extends http.BaseClient {
               streamInfo.videoId,
             );
             final stream = newManifest.streams.firstWhereOrNull(
-              (e) => e.tag == streamInfo.tag,
+              (e) => e is! SabrStreamInfo && e.tag == streamInfo.tag,
             );
             if (stream == null) {
               _logger.severe(

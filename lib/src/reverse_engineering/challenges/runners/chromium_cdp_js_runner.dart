@@ -23,6 +23,7 @@ class ChromiumCdpJsRunner extends BaseWebJsRunner {
   final Directory _userDataDir;
   final WebSocket _ws;
   final Duration _timeout;
+  StreamSubscription<String>? _stderrSub;
 
   int _contextGeneration = 0;
   Uri _originUrl = Uri.parse('https://www.youtube.com/robots.txt');
@@ -31,6 +32,7 @@ class ChromiumCdpJsRunner extends BaseWebJsRunner {
   final Map<int, Completer<Map<String, dynamic>>> _pendingCommands = {};
   Completer<void>? _pageLoadCompleter;
   Future<void> _serial = Future<void>.value();
+  bool _wsClosed = false;
   bool _disposed = false;
 
   ChromiumCdpJsRunner._(
@@ -38,11 +40,27 @@ class ChromiumCdpJsRunner extends BaseWebJsRunner {
     this._userDataDir,
     this._ws,
     this._timeout,
+    this._stderrSub,
   ) {
     _ws.listen(
       _onWsMessage,
-      onError: (_) => _failPending(StateError('CDP WebSocket error')),
-      onDone: () => _failPending(StateError('CDP WebSocket closed')),
+      onError: (_) {
+        _wsClosed = true;
+        _failPending(StateError('CDP WebSocket error'));
+      },
+      onDone: () {
+        _wsClosed = true;
+        _failPending(StateError('CDP WebSocket closed'));
+      },
+    );
+    unawaited(
+      _process.exitCode.then((code) {
+        if (_disposed || _wsClosed) return;
+        _wsClosed = true;
+        _failPending(
+          StateError('Chromium process exited unexpectedly ($code)'),
+        );
+      }),
     );
   }
 
@@ -61,6 +79,7 @@ class ChromiumCdpJsRunner extends BaseWebJsRunner {
     final userDataDir = await Directory.systemTemp.createTemp('yt_cdp_');
     Process? process;
     WebSocket? ws;
+    StreamSubscription<String>? stderrSub;
     try {
       process = await Process.start(binary, [
         '--headless=new',
@@ -74,15 +93,23 @@ class ChromiumCdpJsRunner extends BaseWebJsRunner {
         '--user-data-dir=${userDataDir.path}',
         'about:blank',
       ]);
+      unawaited(process.stdout.drain<void>().catchError((_) {}));
 
-      final wsBrowserUri = await _waitForDevToolsUri(process, timeout);
+      final devTools = await _waitForDevToolsUri(process, timeout);
+      stderrSub = devTools.stderrSub;
       final pageWsUri = await _resolvePageWebSocketUri(
-        wsBrowserUri.port,
+        devTools.uri.port,
         timeout,
       );
       ws = await WebSocket.connect(pageWsUri.toString()).timeout(timeout);
 
-      final runner = ChromiumCdpJsRunner._(process, userDataDir, ws, timeout);
+      final runner = ChromiumCdpJsRunner._(
+        process,
+        userDataDir,
+        ws,
+        timeout,
+        stderrSub,
+      );
       await runner._sendCommand('Page.enable');
       await runner._sendCommand('Runtime.enable');
       await runner._sendCommand('Fetch.enable', {
@@ -92,6 +119,7 @@ class ChromiumCdpJsRunner extends BaseWebJsRunner {
       });
       return runner;
     } catch (_) {
+      await stderrSub?.cancel();
       await ws?.close();
       process?.kill();
       try {
@@ -119,10 +147,8 @@ class ChromiumCdpJsRunner extends BaseWebJsRunner {
     return null;
   }
 
-  static Future<Uri> _waitForDevToolsUri(
-    Process process,
-    Duration timeout,
-  ) async {
+  static Future<({Uri uri, StreamSubscription<String> stderrSub})>
+  _waitForDevToolsUri(Process process, Duration timeout) async {
     final completer = Completer<Uri>();
     final exp = RegExp(r'DevTools listening on (ws://[^\s]+)');
     late final StreamSubscription<String> sub;
@@ -134,9 +160,9 @@ class ChromiumCdpJsRunner extends BaseWebJsRunner {
             final match = exp.firstMatch(line);
             if (match != null && !completer.isCompleted) {
               completer.complete(Uri.parse(match.group(1)!));
-              sub.cancel();
             }
           },
+          onError: (_) {},
           onDone: () {
             if (!completer.isCompleted) {
               completer.completeError(
@@ -145,13 +171,14 @@ class ChromiumCdpJsRunner extends BaseWebJsRunner {
             }
           },
         );
-    return completer.future.timeout(
+    final uri = await completer.future.timeout(
       timeout,
       onTimeout: () {
         sub.cancel();
         throw TimeoutException('Timed out waiting for Chromium DevTools');
       },
     );
+    return (uri: uri, stderrSub: sub);
   }
 
   static Future<Uri> _resolvePageWebSocketUri(
@@ -195,19 +222,41 @@ class ChromiumCdpJsRunner extends BaseWebJsRunner {
     return completer.future;
   }
 
+  Future<void> _resetContextUnlocked({
+    required Uri originUrl,
+    String htmlContent = '<!doctype html><title></title>',
+  }) async {
+    _originUrl = originUrl;
+    _htmlContent = htmlContent;
+    _contextGeneration++;
+    final loadDone = Completer<void>();
+    _pageLoadCompleter = loadDone;
+    await _sendCommand('Page.navigate', {'url': originUrl.toString()});
+    await loadDone.future.timeout(_timeout);
+  }
+
   @override
   Future<void> resetContext({
     required Uri originUrl,
     String htmlContent = '<!doctype html><title></title>',
   }) {
+    return _serialized(
+      () =>
+          _resetContextUnlocked(originUrl: originUrl, htmlContent: htmlContent),
+    );
+  }
+
+  @override
+  Future<void> ensureContext({
+    required Uri originUrl,
+    String htmlContent = '<!doctype html><title></title>',
+  }) {
     return _serialized(() async {
-      _originUrl = originUrl;
-      _htmlContent = htmlContent;
-      _contextGeneration++;
-      final loadDone = Completer<void>();
-      _pageLoadCompleter = loadDone;
-      await _sendCommand('Page.navigate', {'url': originUrl.toString()});
-      await loadDone.future.timeout(_timeout);
+      if (_contextGeneration > 0) return;
+      await _resetContextUnlocked(
+        originUrl: originUrl,
+        htmlContent: htmlContent,
+      );
     });
   }
 
@@ -245,17 +294,13 @@ class ChromiumCdpJsRunner extends BaseWebJsRunner {
     String method, [
     Map<String, dynamic>? params,
   ]) async {
-    if (_disposed) throw StateError('ChromiumCdpJsRunner is disposed');
+    if (_disposed || _wsClosed) {
+      throw StateError('ChromiumCdpJsRunner connection is closed');
+    }
     final id = _nextCommandId++;
     final completer = Completer<Map<String, dynamic>>();
     _pendingCommands[id] = completer;
-    _ws.add(
-      json.encode({
-        'id': id,
-        'method': method,
-        'params': ?params,
-      }),
-    );
+    _ws.add(json.encode({'id': id, 'method': method, 'params': ?params}));
     return completer.future.timeout(
       _timeout,
       onTimeout: () {
@@ -327,13 +372,29 @@ class ChromiumCdpJsRunner extends BaseWebJsRunner {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    _wsClosed = true;
     _failPending(StateError('ChromiumCdpJsRunner disposed'));
-    _ws.close();
+    unawaited(_stderrSub?.cancel().catchError((_) {}));
+    _stderrSub = null;
+    unawaited(_ws.close().catchError((_) {}));
     _process.kill();
-    try {
-      if (_userDataDir.existsSync()) {
-        _userDataDir.deleteSync(recursive: true);
-      }
-    } catch (_) {}
+    unawaited(
+      _process.exitCode
+          .timeout(
+            const Duration(seconds: 2),
+            onTimeout: () {
+              _process.kill(ProcessSignal.sigkill);
+              return -1;
+            },
+          )
+          .catchError((_) => -1)
+          .whenComplete(() async {
+            try {
+              if (await _userDataDir.exists()) {
+                await _userDataDir.delete(recursive: true);
+              }
+            } catch (_) {}
+          }),
+    );
   }
 }

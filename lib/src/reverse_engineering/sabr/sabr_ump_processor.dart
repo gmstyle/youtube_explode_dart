@@ -12,7 +12,7 @@ class _PendingSegment {
   int byteCount = 0;
 
   _PendingSegment(this.header, this.collect)
-    : builder = collect ? BytesBuilder(copy: false) : null;
+    : builder = collect ? BytesBuilder(copy: true) : null;
 }
 
 /// Converts framed UMP parts into complete media segments and control events.

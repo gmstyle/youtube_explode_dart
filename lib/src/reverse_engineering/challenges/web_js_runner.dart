@@ -14,6 +14,18 @@ abstract class BaseWebJsRunner {
     String htmlContent = '<!doctype html><title></title>',
   });
 
+  /// Ensures a JS context has been initialized (calling [resetContext] only
+  /// when [contextGeneration] is `0`).
+  Future<void> ensureContext({
+    required Uri originUrl,
+    String htmlContent = '<!doctype html><title></title>',
+  }) {
+    if (contextGeneration > 0) {
+      return Future<void>.value();
+    }
+    return resetContext(originUrl: originUrl, htmlContent: htmlContent);
+  }
+
   /// Evaluates [jsCode] (which may return a `Promise` or synchronous value)
   /// and returns its string/JSON result, or `null` if the evaluation yields
   /// `null`/`undefined`.

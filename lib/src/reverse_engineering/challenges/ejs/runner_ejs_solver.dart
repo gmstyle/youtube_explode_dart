@@ -52,14 +52,13 @@ class RunnerEJSSolver extends BaseEJSSolver {
   Future<String> executeJavaScript(String jsCode) {
     return _serialized(() async {
       for (var attempt = 0; attempt < 3; attempt++) {
-        if (_runner.contextGeneration == 0) {
-          await _runner.resetContext(originUrl: _defaultOriginUri);
-        }
+        await _runner.ensureContext(originUrl: _defaultOriginUri);
         final targetGen = _runner.contextGeneration;
         if (targetGen != _loadedGeneration) {
           final hasJsc = await _runner.evaluateAsync('typeof globalThis.jsc');
           if (hasJsc != 'function') {
-            final rawModules = await (modulesLoader ?? EJSBuilder.getJSModules)();
+            final rawModules =
+                await (modulesLoader ?? EJSBuilder.getJSModules)();
             final modules = _sanitizeForBrowser(rawModules);
             await _runner.evaluateAsync(
               '$modules\n;if (typeof jsc === "function") { globalThis.jsc = jsc; }\n"ok";',
